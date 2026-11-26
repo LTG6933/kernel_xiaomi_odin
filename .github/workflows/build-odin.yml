@@ -14,6 +14,27 @@ jobs:
           repository: Inkypen79/kernel_xiaomi_odin
           ref: ksu-next
           fetch-depth: 1
+          submodules: recursive
+
+      - name: 1.5 Ensure KernelSU-Next
+        run: |
+          set -e
+          echo "=== before ==="
+          ls -la KernelSU-Next 2>&1 | head || true
+          if [ ! -d KernelSU-Next/kernel ]; then
+            echo ">>> submodule empty, cloning manually"
+            rm -rf KernelSU-Next
+            git clone --depth=1 https://github.com/rifsxd/KernelSU-Next.git KernelSU-Next
+          fi
+          echo "=== after ==="
+          ls KernelSU-Next/kernel/ | head -20
+          echo "=== symlink check ==="
+          ls -la drivers/kernelsu
+          if [ ! -e drivers/kernelsu ]; then
+            echo ">>> symlink broken, recreating"
+            ln -sfn ../KernelSU-Next/kernel drivers/kernelsu
+            ls -la drivers/kernelsu
+          fi
 
       - name: 2. Toolchain
         run: |
@@ -24,11 +45,10 @@ jobs:
           clang-18 --version
           which aarch64-linux-gnu-gcc
 
-      - name: 3. Build (all steps, same env)
+      - name: 3. Build
         run: |
           set -eo pipefail
 
-          # ===== 统一导出所有变量，两次 make 完全一致 =====
           export ARCH=arm64
           export CC=clang-18
           export CROSS_COMPILE=aarch64-linux-gnu-
@@ -38,7 +58,7 @@ jobs:
 
           echo "###### 3.1 verify KSU ######"
           ls -la drivers/kernelsu
-          ls KernelSU-Next/kernel/ | head
+          test -d drivers/kernelsu/ || { echo "kernelsu dir missing"; exit 1; }
           tail -3 drivers/Kconfig
 
           echo "###### 3.2 defconfig ######"
@@ -55,17 +75,17 @@ jobs:
           $CFG --file $F --disable MODULE_SIG_FORCE
           $CFG --file $F --disable MODULE_SIG_ALL
 
-          echo "###### 3.4 olddefconfig (non-interactive) ######"
+          echo "###### 3.4 olddefconfig ######"
           yes "" | make O=out olddefconfig
 
-          echo "###### 3.5 verify ######"
+          echo "###### 3.5 verify config ######"
           grep -E "^CONFIG_KSU|^CONFIG_LOCALVERSION|^CONFIG_MODULE_SIG" $F || true
           grep -q "^CONFIG_KSU=y" $F || { echo "KSU NOT ENABLED"; exit 1; }
 
           echo "###### 3.6 build Image ######"
           yes "" | make O=out -j$(nproc) Image 2>&1 | tee build.log
 
-          echo "###### 3.7 done ######"
+          echo "###### 3.7 result ######"
           ls -la out/arch/arm64/boot/
 
       - name: 4. Diagnose
@@ -74,9 +94,9 @@ jobs:
           echo "##### find Image #####"
           find out -name "Image*" -type f 2>/dev/null | head || true
           echo "##### errors #####"
-          grep -nE "error:|Error in reading|No rule to make|undefined reference" build.log 2>/dev/null | head -40 || echo "(none)"
+                    grep -nE "error:|Error in reading|No rule to make|undefined reference" build.log 2>/dev/null | head -40 || echo "(none)"
           echo "##### tail #####"
-                    tail -30 build.log 2>/dev/null || true
+          tail -30 build.log 2>/dev/null || true
 
       - name: 5. Package
         if: success()
