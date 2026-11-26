@@ -1,0 +1,163 @@
+name: Build odin Kernel (BakaSU + SUSFS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu_source:
+        description: 'KSU 来源'
+        required: true
+        default: 'bakasu'
+        type: choice
+        options:
+          - bakasu
+          - sukisu
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: 1. 拉取内核源码
+        uses: actions/checkout@v4
+        with:
+          repository: Inkypen79/kernel_xiaomi_odin
+          ref: susfs
+          fetch-depth: 1
+
+      - name: 2. 安装工具链 (clang-18 与作者一致)
+        run: |
+          set -e
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            clang-18 lld-18 llvm-18 \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi \
+            bc bison flex libssl-dev libelf-dev \
+            python3 zip unzip cpio xz-utils git
+          echo "=== toolchain ==="
+          clang-18 --version
+          aarch64-linux-gnu-gcc --version | head -1
+
+      - name: 3. 集成 BakaSU
+        if: inputs.ksu_source == 'bakasu'
+        run: |
+          set -e
+          git clone --depth=1 https://github.com/Baka-SU/BakaSU.git /tmp/BakaSU
+          sh /tmp/BakaSU/kernel/setup.sh
+          echo "=== 集成结果 ==="
+          ls -la drivers/kernelsu
+          grep -c kernelsu drivers/Makefile || true
+          grep -c kernelsu drivers/Kconfig || true
+
+      - name: 3. 集成 SukiSU
+        if: inputs.ksu_source == 'sukisu'
+        run: |
+          set -e
+          git clone --depth=1 https://github.com/SukiSU-Nova/SukiSU-Nova.git /tmp/SukiSU
+          sh /tmp/SukiSU/kernel/setup.sh
+          ls -la drivers/kernelsu
+
+      - name: 4. 生成 defconfig
+        run: |
+          set -e
+          export PATH=/usr/lib/llvm-18/bin:$PATH
+          make O=out ARCH=arm64 \
+            CC=clang-18 \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            odin_defconfig
+          echo "=== defconfig 已生成 ==="
+          wc -l out/.config
+
+      - name: 5. 强制打开 KSU / SUSFS 并锁定 vermagic
+        run: |
+          set -e
+          CFG=./scripts/config
+          $CFG --file out/.config -e KSU
+          $CFG --file out/.config -e KSU_SUSFS
+          $CFG --file out/.config -e KSU_SUSFS_SUS_PATH
+          $CFG --file out/.config -e KSU_SUSFS_SUS_MOUNT
+          $CFG --file out/.config -e KSU_SUSFS_SUS_KSTAT
+          $CFG --file out/.config -e KSU_SUSFS_SPOOF_UNAME
+          $CFG --file out/.config -e KSU_SUSFS_ENABLE_LOG -d
+          $CFG --file out/.config -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+
+          # 关键：锁定版本号，必须与厂商模块对齐
+          $CFG --file out/.config -d LOCALVERSION_AUTO
+          $CFG --file out/.config --set-str LOCALVERSION "-qgki-odin-QiuChenly"
+
+          # 关闭模块签名强制（vendor 的 .ko 用原厂 key 签的）
+          $CFG --file out/.config -d MODULE_SIG
+          $CFG --file out/.config -d MODULE_SIG_FORCE
+          $CFG --file out/.config -e MODULE_SIG_ALL -d || true
+
+          make O=out ARCH=arm64 olddefconfig
+
+          echo "=== 核对 ==="
+          grep -E "CONFIG_KSU=|SUSFS|CONFIG_LOCALVERSION" out/.config | head -20
+
+      - name: 6. 编译内核
+        run: |
+          set -e
+          export PATH=/usr/lib/llvm-18/bin:$PATH
+            make O=out ARCH=arm64 \
+            CC=clang-18 \
+            LD=ld.lld-18 \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            LLVM_IAS=1 \
+            -j$(nproc) 2>&1 | tee build.log
+
+      - name: 7. 校验 vermagic
+        run: |
+          set -e
+          IMG=out/arch/arm64/boot/Image
+          ls -la $IMG
+          echo "=== 内核版本字符串 ==="
+          strings $IMG | grep -m1 "Linux version" || true
+          echo ""
+          echo "=== 期望值 ==="
+          echo "Linux version 5.4.302-qgki-odin-QiuChenly"
+          echo ""
+          if strings $IMG | grep -q "5.4.302-qgki-odin-QiuChenly"; then
+            echo "✅ vermagic 匹配，可以刷入"
+          else
+            echo "❌ vermagic 不匹配，vendor 模块会加载失败"
+            strings $IMG | grep -m1 "Linux version"
+          fi
+
+      - name: 8. 打包 AnyKernel3
+        run: |
+          set -e
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git /tmp/AnyKernel3
+          cd /tmp/AnyKernel3
+          rm -rf .git
+
+          sed -i 's/^kernel.string=.*/kernel.string=BakaSU + SUSFS for odin (5.4.302-qgki-odin-QiuChenly)/' anykernel.sh
+          sed -i 's/^device.name1=.*/device.name1=odin/' anykernel.sh
+          sed -i 's/^device.name2=.*/device.name2=MIX4/' anykernel.sh
+          sed -i 's/^device.name3=.*/device.name3=/' anykernel.sh
+          sed -i 's/^device.name4=.*/device.name4=/' anykernel.sh
+          sed -i 's/^device.name5=.*/device.name5=/' anykernel.sh
+
+          cp $GITHUB_WORKSPACE/out/arch/arm64/boot/Image .
+          zip -r9 $GITHUB_WORKSPACE/odin-BakaSU-SUSFS-AnyKernel3.zip * -x ".git/*" "README.md"
+
+      - name: 9. 生成独立 boot.img（可选）
+        run: |
+          set -e
+          # 只导出裸内核，boot.img 需要原版底包，这里不自动合成
+          cp out/arch/arm64/boot/Image ./Image-odin-BakaSU-SUSFS
+          ls -la Image-odin-BakaSU-SUSFS odin-BakaSU-SUSFS-AnyKernel3.zip
+
+      - name: 10. 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: odin-kernel-${{ inputs.ksu_source }}
+          path: |
+            Image-odin-BakaSU-SUSFS
+            odin-BakaSU-SUSFS-AnyKernel3.zip
+            build.log
+          retention-days: 30
