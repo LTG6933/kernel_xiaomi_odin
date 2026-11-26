@@ -1,27 +1,18 @@
-name: Build odin Kernel
+name: Build odin
 
 on:
   workflow_dispatch:
-    inputs:
-      ksu_source:
-        description: "KSU source"
-        required: true
-        default: bakasu
-        type: choice
-        options:
-          - bakasu
-          - sukisu
 
 jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
-      - name: 1. Checkout
+      - name: 1. Checkout ksu-next
         uses: actions/checkout@v4
         with:
           repository: Inkypen79/kernel_xiaomi_odin
-          ref: susfs
+          ref: ksu-next
           fetch-depth: 1
 
       - name: 2. Toolchain
@@ -29,75 +20,73 @@ jobs:
           set -e
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clang-18 lld-18 llvm-18 gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu gcc-arm-linux-gnueabi bc bison flex libssl-dev libelf-dev python3 zip unzip cpio xz-utils git
+          which clang-18
           clang-18 --version
+          which aarch64-linux-gnu-gcc
 
-      - name: 3. Integrate KSU
+      - name: 3. Build (all steps, same env)
         run: |
-          set -e
-          if [ "${{ inputs.ksu_source }}" = "bakasu" ]; then
-            git clone --depth=1 https://github.com/Baka-SU/BakaSU.git /tmp/KSU
-          else
-            git clone --depth=1 https://github.com/SukiSU-Nova/SukiSU-Nova.git /tmp/KSU
-          fi
-          sh /tmp/KSU/kernel/setup.sh
-          echo "--- symlink ---"
-          ls -la drivers/kernelsu
-          echo "--- Makefile ---"
-          grep -n kernelsu drivers/Makefile
-          echo "--- Kconfig ---"
-          grep -n kernelsu drivers/Kconfig
+          set -eo pipefail
 
-      - name: 4. defconfig
-        run: |
-          set -e
+          # ===== 统一导出所有变量，两次 make 完全一致 =====
+          export ARCH=arm64
+          export CC=clang-18
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export CLANG_TRIPLE=aarch64-linux-gnu-
           export PATH=/usr/lib/llvm-18/bin:$PATH
-          make O=out ARCH=arm64 CC=clang-18 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- odin_defconfig
+
+          echo "###### 3.1 verify KSU ######"
+          ls -la drivers/kernelsu
+          ls KernelSU-Next/kernel/ | head
+          tail -3 drivers/Kconfig
+
+          echo "###### 3.2 defconfig ######"
+          make O=out odin_defconfig
           wc -l out/.config
 
-      - name: 5. Patch config
-        run: |
-          set -e
+          echo "###### 3.3 patch config ######"
           CFG=./scripts/config
           F=out/.config
           $CFG --file $F --enable KSU
-          $CFG --file $F --enable KSU_SUSFS
-          $CFG --file $F --enable KSU_SUSFS_SUS_PATH
-          $CFG --file $F --enable KSU_SUSFS_SUS_MOUNT
-          $CFG --file $F --enable KSU_SUSFS_SUS_KSTAT
-          $CFG --file $F --enable KSU_SUSFS_SPOOF_UNAME
-          $CFG --file $F --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-          $CFG --file $F --disable KSU_SUSFS_ENABLE_LOG
           $CFG --file $F --disable LOCALVERSION_AUTO
           $CFG --file $F --set-str LOCALVERSION "-qgki-odin-QiuChenly"
           $CFG --file $F --disable MODULE_SIG
           $CFG --file $F --disable MODULE_SIG_FORCE
           $CFG --file $F --disable MODULE_SIG_ALL
-          make O=out ARCH=arm64 olddefconfig
-          echo "=== CONFIG ==="
-          grep -E "^CONFIG_KSU|SUSFS|^CONFIG_LOCALVERSION" $F || true
+
+          echo "###### 3.4 olddefconfig (non-interactive) ######"
+          yes "" | make O=out olddefconfig
+
+          echo "###### 3.5 verify ######"
+          grep -E "^CONFIG_KSU|^CONFIG_LOCALVERSION|^CONFIG_MODULE_SIG" $F || true
           grep -q "^CONFIG_KSU=y" $F || { echo "KSU NOT ENABLED"; exit 1; }
 
-      - name: 6. Build
+          echo "###### 3.6 build Image ######"
+          yes "" | make O=out -j$(nproc) Image 2>&1 | tee build.log
+
+          echo "###### 3.7 done ######"
+          ls -la out/arch/arm64/boot/
+
+      - name: 4. Diagnose
+        if: always()
+        run: |
+          echo "##### find Image #####"
+          find out -name "Image*" -type f 2>/dev/null | head || true
+          echo "##### errors #####"
+          grep -nE "error:|Error in reading|No rule to make|undefined reference" build.log 2>/dev/null | head -40 || echo "(none)"
+          echo "##### tail #####"
+                    tail -30 build.log 2>/dev/null || true
+
+      - name: 5. Package
+        if: success()
         run: |
           set -e
-          export PATH=/usr/lib/llvm-18/bin:$PATH
-          make O=out ARCH=arm64 CC=clang-18 LD=ld.lld-18 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM_IAS=1 -j$(nproc) 2>&1 | tee build.log
-
-      - name: 7. Verify
-        run: |
-          IMG=out/arch/arm64/boot/Image
-          ls -la $IMG
-          echo "=== VERSION ==="
-          strings $IMG | grep -m1 "Linux version" || true
-
-      - name: 8. Package
-        run: |
-          set -e
-                    cp out/arch/arm64/boot/Image ./Image-odin
+          cp out/arch/arm64/boot/Image ./Image-odin
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git /tmp/AK3
           cd /tmp/AK3
           rm -rf .git
-          sed -i 's/^kernel.string=.*/kernel.string=BakaSU SUSFS odin/' anykernel.sh
+          sed -i 's/^kernel.string=.*/kernel.string=KSU odin/' anykernel.sh
           sed -i 's/^device.name1=.*/device.name1=odin/' anykernel.sh
           sed -i 's/^device.name2=.*/device.name2=MIX4/' anykernel.sh
           cp $GITHUB_WORKSPACE/Image-odin ./Image
@@ -105,10 +94,11 @@ jobs:
           cd $GITHUB_WORKSPACE
           ls -la Image-odin odin-AnyKernel3.zip
 
-      - name: 9. Upload
+      - name: 6. Upload
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: odin-kernel
+          name: odin-ksu
           path: |
             Image-odin
             odin-AnyKernel3.zip
