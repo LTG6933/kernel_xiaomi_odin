@@ -1,4 +1,4 @@
-name: Build odin BakaSU+SUSFS240
+name: Build odin BakaSU+SUSFS230
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     steps:
-      - name: 1. Checkout sukisu (hook 匹配 BakaSU)
+      - name: 1. Checkout sukisu
         uses: actions/checkout@v4
         with:
           repository: Inkypen79/kernel_xiaomi_odin
@@ -22,27 +22,33 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clang-18 lld-18 llvm-18 gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu gcc-arm-linux-gnueabi bc bison flex libssl-dev libelf-dev python3 zip unzip cpio xz-utils git curl
           clang-18 --version
 
-      - name: 2.5 Upgrade SUSFS to v2.4.0
+      - name: 2.5 Upgrade SUSFS to v2.3.0
         run: |
           set -e
-          SRC=https://raw.githubusercontent.com/shadichy/susfs4ksu/master/kernel_patches
+          SRC=https://raw.githubusercontent.com/yapixel/susfs4ksu/main/kernel_patches
 
           echo "=== 备份 2.0.0 ==="
           cp fs/susfs.c fs/susfs.c.orig
           cp include/linux/susfs.h include/linux/susfs.h.orig
           [ -f include/linux/susfs_def.h ] && cp include/linux/susfs_def.h include/linux/susfs_def.h.orig || true
-          echo "原版本:"
           grep -m1 SUSFS_VERSION include/linux/susfs.h || true
 
-          echo "=== 下载 2.4.0 ==="
+          echo "=== 下载 2.3.0 ==="
           curl -fsSL "$SRC/fs/susfs.c" -o fs/susfs.c
           curl -fsSL "$SRC/include/linux/susfs.h" -o include/linux/susfs.h
-          curl -fsSL "$SRC/include/linux/susfs_def.h" -o include/linux/susfs_def.h || echo "(2.4.0 无独立 def.h)"
+          curl -fsSL "$SRC/include/linux/susfs_def.h" -o include/linux/susfs_def.h || echo "(no separate def.h)"
 
-          echo "=== 新版本 ==="
-          grep -m1 SUSFS_VERSION include/linux/susfs.h || echo "WARN no version macro"
-          ls -la fs/susfs.c include/linux/susfs.h
-          wc -c fs/susfs.c
+          echo "=== 版本 ==="
+          grep -m1 SUSFS_VERSION include/linux/susfs.h
+          wc -c fs/susfs.c include/linux/susfs.h
+
+          echo "=== 5.4 兼容性检查 ==="
+          echo -n "  handle_inode_event 是否有 #if 保护: "
+          grep -B2 "handle_inode_event" fs/susfs.c | grep -q "KERNEL_VERSION(5, 9, 0)" && echo "YES" || echo "NO - 危险"
+          echo -n "  SUSFS_LOGI_RL 出现次数: "
+          grep -c "SUSFS_LOGI_RL" fs/susfs.c || echo 0
+          echo -n "  current_uid().val 出现次数: "
+          grep -c "current_uid().val" include/linux/susfs_def.h fs/susfs.c 2>/dev/null | awk -F: '{s+=$2}END{print s+0}'
 
       - name: 3. Integrate BakaSU (manual)
         run: |
@@ -65,7 +71,7 @@ jobs:
           set -e
           sed -i 's/\bksu_init_rc_hook\b/susfs_compat_init_rc/g' fs/read_write.c fs/stat.c
           sed -i 's/\bksu_input_hook\b/susfs_compat_input/g' drivers/input/input.c
-          sed -i 's/\bksu_execveat_hook\b/susfs_compat_execveat/g' fs/exec.c
+                    sed -i 's/\bksu_execveat_hook\b/susfs_compat_execveat/g' fs/exec.c
           sed -i 's/^extern bool susfs_compat_\([a-z_]*\) __read_mostly;/static bool susfs_compat_\1 __read_mostly = true;/' fs/read_write.c fs/stat.c drivers/input/input.c fs/exec.c
           grep -n "susfs_compat_" fs/read_write.c fs/stat.c drivers/input/input.c fs/exec.c | head
           if grep -qw "ksu_init_rc_hook\|ksu_input_hook\|ksu_execveat_hook\|ksu_vfs_read_hook" fs/read_write.c fs/stat.c drivers/input/input.c fs/exec.c; then
@@ -78,7 +84,7 @@ jobs:
           set -eo pipefail
           export ARCH=arm64
           export CC=clang-18
-                    export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export PATH=/usr/lib/llvm-18/bin:$PATH
@@ -138,34 +144,34 @@ jobs:
           echo "##### susfs objects #####"
           find out -name "susfs*.o" 2>/dev/null | head || true
           echo "##### ksu objects #####"
-          find out -path "*kernelsu*" -name "*.o" 2>/dev/null | head -10 || true
+          find out -path "*kernelsu*" -name "*.o" 2>/dev/null | head -5 || true
           echo "##### ALL errors #####"
           grep -nE "error:|Error [0-9]|undefined reference|You lost|You should integrate|can't open|fatal" build.log 2>/dev/null | head -50 || echo "(none)"
           echo "##### tail #####"
-          tail -40 build.log 2>/dev/null || true
+          tail -30 build.log 2>/dev/null || true
 
       - name: 6. Package
         if: success()
         run: |
           set -e
           cp out/arch/arm64/boot/Image ./Image-odin
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git /tmp/AK3
+                    git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git /tmp/AK3
           cd /tmp/AK3
           rm -rf .git
-          sed -i 's/^kernel.string=.*/kernel.string=BakaSU+SUSFS240 odin/' anykernel.sh
+          sed -i 's/^kernel.string=.*/kernel.string=BakaSU+SUSFS230 odin/' anykernel.sh
           sed -i 's/^device.name1=.*/device.name1=odin/' anykernel.sh
           sed -i 's/^device.name2=.*/device.name2=MIX4/' anykernel.sh
           cp $GITHUB_WORKSPACE/Image-odin ./Image
-          zip -r9 $GITHUB_WORKSPACE/odin-BakaSU-SUSFS240.zip *
+          zip -r9 $GITHUB_WORKSPACE/odin-BakaSU-SUSFS230.zip *
           cd $GITHUB_WORKSPACE
-          ls -la Image-odin odin-BakaSU-SUSFS240.zip
+          ls -la Image-odin odin-BakaSU-SUSFS230.zip
 
       - name: 7. Upload
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: odin-BakaSU-SUSFS240
+          name: odin-BakaSU-SUSFS230
           path: |
             Image-odin
-            odin-BakaSU-SUSFS240.zip
+            odin-BakaSU-SUSFS230.zip
             build.log
