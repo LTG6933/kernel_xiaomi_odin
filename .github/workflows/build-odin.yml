@@ -1,4 +1,4 @@
-name: Build odin
+name: Build odin BakaSU+SUSFS
 
 on:
   workflow_dispatch:
@@ -6,29 +6,14 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 240
     steps:
-      - name: 1. Checkout ksu-next
+      - name: 1. Checkout susfs branch
         uses: actions/checkout@v4
         with:
           repository: Inkypen79/kernel_xiaomi_odin
-          ref: ksu-next
+          ref: susfs
           fetch-depth: 1
-          submodules: recursive
-
-      - name: 1.5 Ensure KernelSU-Next
-        run: |
-          set -e
-          if [ ! -d KernelSU-Next/kernel ]; then
-            echo ">>> cloning KernelSU-Next"
-            rm -rf KernelSU-Next
-            git clone --depth=1 https://github.com/rifsxd/KernelSU-Next.git KernelSU-Next
-          fi
-          ls KernelSU-Next/kernel/ | head -5
-          ls -la drivers/kernelsu
-          if [ ! -e drivers/kernelsu ]; then
-            ln -sfn ../KernelSU-Next/kernel drivers/kernelsu
-          fi
 
       - name: 2. Toolchain
         run: |
@@ -37,7 +22,22 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clang-18 lld-18 llvm-18 gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu gcc-arm-linux-gnueabi bc bison flex libssl-dev libelf-dev python3 zip unzip cpio xz-utils git
           clang-18 --version
 
-      - name: 3. Build
+      - name: 3. Integrate BakaSU
+        run: |
+          set -e
+          git clone --depth=1 https://github.com/Baka-SU/BakaSU.git /tmp/BakaSU
+          sh /tmp/BakaSU/kernel/setup.sh
+          echo "=== symlink ==="
+          ls -la drivers/kernelsu
+          echo "=== Kconfig tail ==="
+          tail -5 drivers/Kconfig
+          echo "=== Makefile ==="
+          grep -n kernelsu drivers/Makefile
+          echo "=== SUSFS kernel side ==="
+          ls -la fs/susfs.c include/linux/susfs.h
+          grep -n susfs fs/Makefile
+
+      - name: 4. Build
         run: |
           set -eo pipefail
 
@@ -48,48 +48,77 @@ jobs:
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export PATH=/usr/lib/llvm-18/bin:$PATH
 
-          echo "###### 3.1 verify KSU ######"
-          ls -la drivers/kernelsu
-          tail -3 drivers/Kconfig
-
-          echo "###### 3.2 defconfig ######"
+          echo "###### 4.1 defconfig ######"
           make O=out odin_defconfig < /dev/null
           wc -l out/.config
 
-          echo "###### 3.3 patch config ######"
+          echo "###### 4.2 patch config ######"
           CFG=./scripts/config
           F=out/.config
+
+          # KSU
           $CFG --file $F --enable KSU
+
+          # hooking method 是 choice，必须三选一
+          $CFG --file $F --disable KSU_TRACEPOINT_HOOK
+          $CFG --file $F --disable KSU_MANUAL_HOOK
+          $CFG --file $F --enable  KSU_SUSFS
+
+          # SUSFS 子功能
+          $CFG --file $F --enable  KSU_SUSFS_SUS_PATH
+          $CFG --file $F --enable  KSU_SUSFS_SUS_MOUNT
+          $CFG --file $F --enable  KSU_SUSFS_SUS_KSTAT
+          $CFG --file $F --enable  KSU_SUSFS_SPOOF_UNAME
+          $CFG --file $F --enable  KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          $CFG --file $F --enable  KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+          $CFG --file $F --enable  KSU_SUSFS_OPEN_REDIRECT
+          $CFG --file $F --enable  KSU_SUSFS_SUS_MAP
+          $CFG --file $F --disable KSU_SUSFS_ENABLE_LOG
+
+          # 版本号：覆盖 defconfig 里的 -inkypen-v2
           $CFG --file $F --disable LOCALVERSION_AUTO
           $CFG --file $F --set-str LOCALVERSION "-qgki-odin-QiuChenly"
+
+          # LTO 走 None，避免 clang LTO 兼容问题
+          $CFG --file $F --disable LTO_CLANG
+
+          # 模块签名
           $CFG --file $F --disable MODULE_SIG
           $CFG --file $F --disable MODULE_SIG_FORCE
           $CFG --file $F --disable MODULE_SIG_ALL
 
-          echo "###### 3.4 olddefconfig (no yes, no pipe) ######"
+          echo "###### 4.3 olddefconfig ######"
           make O=out olddefconfig < /dev/null
 
-          echo "###### 3.5 verify config ######"
-          grep -E "^CONFIG_KSU|^CONFIG_LOCALVERSION|^CONFIG_MODULE_SIG" $F || true
-          grep -q "^CONFIG_KSU=y" $F || { echo "KSU NOT ENABLED"; exit 1; }
+          echo "###### 4.4 verify ######"
+          grep -E "^CONFIG_KSU|SUSFS|^CONFIG_LOCALVERSION|^CONFIG_MODULE_SIG|^CONFIG_LTO" $F || true
+          echo "---"
+          grep -q "^CONFIG_KSU=y"        $F || { echo "FAIL: KSU";   exit 1; }
+                    grep -q "^CONFIG_KSU_SUSFS=y"  $F || { echo "FAIL: SUSFS"; exit 1; }
+          grep -q '^CONFIG_LOCALVERSION="-qgki-odin-QiuChenly"' $F || { echo "FAIL: LOCALVERSION"; exit 1; }
+          echo ">>> config OK"
 
-          echo "###### 3.6 build Image ######"
+          echo "###### 4.5 build Image ######"
           make O=out -j$(nproc) Image < /dev/null 2>&1 | tee build.log
 
-          echo "###### 3.7 result ######"
-                    ls -la out/arch/arm64/boot/
+          echo "###### 4.6 result ######"
+          ls -la out/arch/arm64/boot/
 
-      - name: 4. Diagnose
+      - name: 5. Diagnose
         if: always()
         run: |
-          echo "##### find Image #####"
+          echo "##### Image #####"
           find out -name "Image*" -type f 2>/dev/null | head || true
+          echo "##### susfs objects #####"
+          find out -name "susfs*.o" 2>/dev/null | head || true
+          echo "##### ksu objects #####"
+          find out -path "*kernelsu*" -name "*.o" 2>/dev/null | head -10 || true
           echo "##### errors #####"
-          grep -nE "error:|Error in reading|No rule to make|undefined reference" build.log 2>/dev/null | head -40 || echo "(none)"
+          grep -nE "error:|Error in reading|No rule to make|undefined reference|Broken pipe|fatal" build.log 2>/dev/null | head -50 || echo "(no error lines)"
           echo "##### tail #####"
-          tail -30 build.log 2>/dev/null || true
+          tail -40 build.log 2>/dev/null || true
 
-      - name: 5. Package
+      - name: 6. Package
         if: success()
         run: |
           set -e
@@ -97,20 +126,20 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git /tmp/AK3
           cd /tmp/AK3
           rm -rf .git
-          sed -i 's/^kernel.string=.*/kernel.string=KSU odin/' anykernel.sh
+          sed -i 's/^kernel.string=.*/kernel.string=BakaSU+SUSFS odin/' anykernel.sh
           sed -i 's/^device.name1=.*/device.name1=odin/' anykernel.sh
           sed -i 's/^device.name2=.*/device.name2=MIX4/' anykernel.sh
           cp $GITHUB_WORKSPACE/Image-odin ./Image
-          zip -r9 $GITHUB_WORKSPACE/odin-AnyKernel3.zip *
+          zip -r9 $GITHUB_WORKSPACE/odin-BakaSU-SUSFS.zip *
           cd $GITHUB_WORKSPACE
-          ls -la Image-odin odin-AnyKernel3.zip
+          ls -la Image-odin odin-BakaSU-SUSFS.zip
 
-      - name: 6. Upload
+      - name: 7. Upload
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: odin-ksu
+          name: odin-BakaSU-SUSFS
           path: |
             Image-odin
-            odin-AnyKernel3.zip
+            odin-BakaSU-SUSFS.zip
             build.log
