@@ -19,21 +19,15 @@ jobs:
       - name: 1.5 Ensure KernelSU-Next
         run: |
           set -e
-          echo "=== before ==="
-          ls -la KernelSU-Next 2>&1 | head || true
           if [ ! -d KernelSU-Next/kernel ]; then
-            echo ">>> submodule empty, cloning manually"
+            echo ">>> cloning KernelSU-Next"
             rm -rf KernelSU-Next
             git clone --depth=1 https://github.com/rifsxd/KernelSU-Next.git KernelSU-Next
           fi
-          echo "=== after ==="
-          ls KernelSU-Next/kernel/ | head -20
-          echo "=== symlink check ==="
+          ls KernelSU-Next/kernel/ | head -5
           ls -la drivers/kernelsu
           if [ ! -e drivers/kernelsu ]; then
-            echo ">>> symlink broken, recreating"
             ln -sfn ../KernelSU-Next/kernel drivers/kernelsu
-            ls -la drivers/kernelsu
           fi
 
       - name: 2. Toolchain
@@ -41,9 +35,7 @@ jobs:
           set -e
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clang-18 lld-18 llvm-18 gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu gcc-arm-linux-gnueabi bc bison flex libssl-dev libelf-dev python3 zip unzip cpio xz-utils git
-          which clang-18
           clang-18 --version
-          which aarch64-linux-gnu-gcc
 
       - name: 3. Build
         run: |
@@ -58,11 +50,10 @@ jobs:
 
           echo "###### 3.1 verify KSU ######"
           ls -la drivers/kernelsu
-          test -d drivers/kernelsu/ || { echo "kernelsu dir missing"; exit 1; }
           tail -3 drivers/Kconfig
 
           echo "###### 3.2 defconfig ######"
-          make O=out odin_defconfig
+          make O=out odin_defconfig < /dev/null
           wc -l out/.config
 
           echo "###### 3.3 patch config ######"
@@ -75,18 +66,18 @@ jobs:
           $CFG --file $F --disable MODULE_SIG_FORCE
           $CFG --file $F --disable MODULE_SIG_ALL
 
-          echo "###### 3.4 olddefconfig ######"
-          yes "" | make O=out olddefconfig
+          echo "###### 3.4 olddefconfig (no yes, no pipe) ######"
+          make O=out olddefconfig < /dev/null
 
           echo "###### 3.5 verify config ######"
           grep -E "^CONFIG_KSU|^CONFIG_LOCALVERSION|^CONFIG_MODULE_SIG" $F || true
           grep -q "^CONFIG_KSU=y" $F || { echo "KSU NOT ENABLED"; exit 1; }
 
           echo "###### 3.6 build Image ######"
-          yes "" | make O=out -j$(nproc) Image 2>&1 | tee build.log
+          make O=out -j$(nproc) Image < /dev/null 2>&1 | tee build.log
 
           echo "###### 3.7 result ######"
-          ls -la out/arch/arm64/boot/
+                    ls -la out/arch/arm64/boot/
 
       - name: 4. Diagnose
         if: always()
@@ -94,7 +85,7 @@ jobs:
           echo "##### find Image #####"
           find out -name "Image*" -type f 2>/dev/null | head || true
           echo "##### errors #####"
-                    grep -nE "error:|Error in reading|No rule to make|undefined reference" build.log 2>/dev/null | head -40 || echo "(none)"
+          grep -nE "error:|Error in reading|No rule to make|undefined reference" build.log 2>/dev/null | head -40 || echo "(none)"
           echo "##### tail #####"
           tail -30 build.log 2>/dev/null || true
 
