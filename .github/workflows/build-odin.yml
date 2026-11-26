@@ -8,11 +8,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     steps:
-      - name: 1. Checkout susfs branch
+      - name: 1. Checkout sukisu branch
         uses: actions/checkout@v4
         with:
           repository: Inkypen79/kernel_xiaomi_odin
-          ref: susfs
+          ref: sukisu
           fetch-depth: 1
 
       - name: 2. Toolchain
@@ -29,20 +29,30 @@ jobs:
           sh /tmp/BakaSU/kernel/setup.sh
           ls -la drivers/kernelsu
           tail -3 drivers/Kconfig
-          grep -n kernelsu drivers/Makefile
           ls -la fs/susfs.c include/linux/susfs.h
-          grep -n susfs fs/Makefile
 
-      - name: 3.5 Fix fs/open.c missing include
+      - name: 3.5 Neutralize legacy bool hooks
         run: |
           set -e
-          echo "=== before ==="
-          sed -n '34,38p' fs/open.c
-          sed -i 's|^#include "internal.h"$|#include "internal.h"\n#include <linux/susfs_def.h>|' fs/open.c
-          echo "=== after ==="
-          sed -n '34,40p' fs/open.c
-          grep -q "susfs_def.h" fs/open.c || { echo "PATCH FAILED"; exit 1; }
-          echo ">>> open.c patched OK"
+          sed -i 's/\bksu_init_rc_hook\b/susfs_compat_init_rc/g' fs/read_write.c fs/stat.c
+          sed -i 's/\bksu_input_hook\b/susfs_compat_input/g' drivers/input/input.c
+          sed -i 's/\bksu_execveat_hook\b/susfs_compat_execveat/g' fs/exec.c
+          sed -i 's/^extern bool susfs_compat_\([a-z_]*\) __read_mostly;/static bool susfs_compat_\1 __read_mostly = true;/' fs/read_write.c fs/stat.c drivers/input/input.c fs/exec.c
+
+          echo "=== 残留旧 hook 检查（必须全空）==="
+          for f in fs/read_write.c fs/stat.c drivers/input/input.c fs/exec.c; do
+            echo -n "$f: "
+            grep -wo "ksu_vfs_read_hook\|ksu_input_hook\|ksu_execveat_hook\|ksu_init_rc_hook" $f || true
+            echo "[end]"
+          done
+
+          echo "=== 新定义检查 ==="
+          grep -n "susfs_compat_" fs/read_write.c fs/stat.c drivers/input/input.c fs/exec.c | head -20
+
+          if grep -qw "ksu_init_rc_hook\|ksu_input_hook\|ksu_execveat_hook\|ksu_vfs_read_hook" fs/read_write.c fs/stat.c drivers/input/input.c fs/exec.c; then
+            echo "STILL HAS LEGACY HOOK"; exit 1
+          fi
+          echo ">>> legacy hooks neutralized"
 
       - name: 4. Build
         run: |
@@ -50,7 +60,7 @@ jobs:
 
           export ARCH=arm64
           export CC=clang-18
-                    export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export PATH=/usr/lib/llvm-18/bin:$PATH
@@ -62,8 +72,7 @@ jobs:
           echo "###### 4.2 patch config ######"
           CFG=./scripts/config
           F=out/.config
-
-          $CFG --file $F --enable KSU
+                    $CFG --file $F --enable KSU
           $CFG --file $F --disable KSU_TRACEPOINT_HOOK
           $CFG --file $F --disable KSU_MANUAL_HOOK
           $CFG --file $F --enable  KSU_SUSFS
@@ -74,8 +83,8 @@ jobs:
           $CFG --file $F --enable  KSU_SUSFS_SPOOF_UNAME
           $CFG --file $F --enable  KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
           $CFG --file $F --enable  KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-          $CFG --file $F --enable  KSU_SUSFS_OPEN_REDIRECT
           $CFG --file $F --enable  KSU_SUSFS_SUS_MAP
+          $CFG --file $F --disable KSU_SUSFS_OPEN_REDIRECT
           $CFG --file $F --disable KSU_SUSFS_ENABLE_LOG
 
           $CFG --file $F --disable LOCALVERSION_AUTO
@@ -91,8 +100,8 @@ jobs:
           echo "###### 4.4 verify ######"
           grep -E "^CONFIG_KSU|SUSFS|^CONFIG_LOCALVERSION" $F || true
           echo "---"
-          grep -q "^CONFIG_KSU=y"        $F || { echo "FAIL: KSU";   exit 1; }
-          grep -q "^CONFIG_KSU_SUSFS=y"  $F || { echo "FAIL: SUSFS"; exit 1; }
+          grep -q "^CONFIG_KSU=y"       $F || { echo "FAIL: KSU";   exit 1; }
+          grep -q "^CONFIG_KSU_SUSFS=y" $F || { echo "FAIL: SUSFS"; exit 1; }
           grep -q '^CONFIG_LOCALVERSION="-qgki-odin-QiuChenly"' $F || { echo "FAIL: LOCALVERSION"; exit 1; }
           echo ">>> config OK"
 
@@ -112,7 +121,7 @@ jobs:
           echo "##### ksu objects #####"
           find out -path "*kernelsu*" -name "*.o" 2>/dev/null | head -10 || true
           echo "##### ALL errors #####"
-          grep -nE "error:|Error in reading|No rule to make|undefined reference|fatal" build.log 2>/dev/null | head -50 || echo "(no error lines)"
+          grep -nE "error:|Error [0-9]|undefined reference|You lost|You should integrate|fatal" build.log 2>/dev/null | head -50 || echo "(none)"
           echo "##### tail #####"
           tail -40 build.log 2>/dev/null || true
 
