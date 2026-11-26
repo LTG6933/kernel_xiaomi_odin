@@ -48,6 +48,24 @@ jobs:
           grep -n "susfs" fs/Makefile
           echo ">>> compat ready"
 
+      - name: 2.7 Rewire SUS_KSTAT callsites to 2.3.0 API
+        run: |
+          set -e
+          echo "=== fs/stat.c before ==="
+          grep -n "susfs_sus_ino_for_generic_fillattr" fs/stat.c || true
+          sed -i 's|extern void susfs_sus_ino_for_generic_fillattr(unsigned long ino, struct kstat \*stat);|extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode *inode, struct kstat *stat, u32 result_mask);|' fs/stat.c
+          sed -i 's|susfs_sus_ino_for_generic_fillattr(inode->i_ino, stat);|susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT);|' fs/stat.c
+          echo "=== fs/stat.c after ==="
+          grep -n "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c || { echo "FAIL stat.c"; exit 1; }
+
+          echo "=== task_mmu.c before ==="
+          grep -n "susfs_sus_ino_for_show_map_vma" fs/proc/task_mmu.c || true
+          sed -i 's|extern void susfs_sus_ino_for_show_map_vma(unsigned long ino, dev_t \*out_dev, unsigned long \*out_ino);|extern void susfs_sus_kstat_spoof_show_map_vma(struct inode *inode, dev_t *out_dev, unsigned long *out_ino);|' fs/proc/task_mmu.c
+          sed -i 's|susfs_sus_ino_for_show_map_vma(inode->i_ino, &dev, &ino);|susfs_sus_kstat_spoof_show_map_vma(inode, \&dev, \&ino);|' fs/proc/task_mmu.c
+          echo "=== task_mmu.c after ==="
+          grep -n "susfs_sus_kstat_spoof_show_map_vma" fs/proc/task_mmu.c || { echo "FAIL task_mmu.c"; exit 1; }
+          echo ">>> SUS_KSTAT callsites rewired"
+
       - name: 3. Integrate BakaSU
         run: |
           set -e
