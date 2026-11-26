@@ -70,33 +70,65 @@ jobs:
           echo "=== defconfig 已生成 ==="
           wc -l out/.config
 
-      - name: 5. 强制打开 KSU / SUSFS 并锁定 vermagic
+            - name: 5. 强制打开 KSU / SUSFS 并锁定 vermagic
         run: |
           set -e
           CFG=./scripts/config
-          $CFG --file out/.config -e KSU
-          $CFG --file out/.config -e KSU_SUSFS
-          $CFG --file out/.config -e KSU_SUSFS_SUS_PATH
-          $CFG --file out/.config -e KSU_SUSFS_SUS_MOUNT
-          $CFG --file out/.config -e KSU_SUSFS_SUS_KSTAT
-          $CFG --file out/.config -e KSU_SUSFS_SPOOF_UNAME
-          $CFG --file out/.config -e KSU_SUSFS_ENABLE_LOG -d
-          $CFG --file out/.config -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          F=out/.config
 
-          # 关键：锁定版本号，必须与厂商模块对齐
-          $CFG --file out/.config -d LOCALVERSION_AUTO
-          $CFG --file out/.config --set-str LOCALVERSION "-qgki-odin-QiuChenly"
+          if [ ! -f "$CFG" ]; then
+            echo "❌ 找不到 scripts/config"; exit 1
+          fi
 
-          # 关闭模块签名强制（vendor 的 .ko 用原厂 key 签的）
-          $CFG --file out/.config -d MODULE_SIG
-          $CFG --file out/.config -d MODULE_SIG_FORCE
-          $CFG --file out/.config -e MODULE_SIG_ALL -d || true
+          # ---- 打开 KSU ----
+          $CFG --file $F --enable KSU
+
+          # ---- 打开 SUSFS 及其子项 ----
+          $CFG --file $F --enable KSU_SUSFS
+          $CFG --file $F --enable KSU_SUSFS_SUS_PATH
+          $CFG --file $F --enable KSU_SUSFS_SUS_MOUNT
+          $CFG --file $F --enable KSU_SUSFS_SUS_KSTAT
+          $CFG --file $F --enable KSU_SUSFS_SPOOF_UNAME
+          $CFG --file $F --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+
+          # ---- 关闭日志（避免留下痕迹）----
+          $CFG --file $F --disable KSU_SUSFS_ENABLE_LOG
+
+          # ---- 锁定版本号，必须与作者内核一致 ----
+          $CFG --file $F --disable LOCALVERSION_AUTO
+          $CFG --file $F --set-str LOCALVERSION "-qgki-odin-QiuChenly"
+
+          # ---- 关闭模块签名强制 ----
+          $CFG --file $F --disable MODULE_SIG
+          $CFG --file $F --disable MODULE_SIG_FORCE
+          $CFG --file $F --disable MODULE_SIG_ALL
 
           make O=out ARCH=arm64 olddefconfig
 
-          echo "=== 核对 ==="
-          grep -E "CONFIG_KSU=|SUSFS|CONFIG_LOCALVERSION" out/.config | head -20
+          echo "=== 生效配置核对 ==="
+          grep -E "^CONFIG_KSU|^CONFIG_.*SUSFS|^CONFIG_LOCALVERSION|^CONFIG_MODULE_SIG" $F || true
 
+          echo ""
+          echo "=== 强制校验 ==="
+          if ! grep -q "^CONFIG_KSU=y" $F; then
+            echo "❌ CONFIG_KSU 未生效"
+            echo "--- drivers/Kconfig 里的 kernelsu 引用 ---"
+            grep -n "kernelsu" drivers/Kconfig || echo "(没有找到，说明 setup.sh 没成功)"
+            echo "--- drivers 目录 ---"
+            ls -la drivers/kernelsu || true
+            exit 1
+          fi
+          echo "✅ CONFIG_KSU=y"
+
+          if ! grep -q "^CONFIG_KSU_SUSFS=y" $F; then
+            echo "⚠️ CONFIG_KSU_SUSFS 未生效，继续编译但无 SUSFS"
+          else
+            echo "✅ CONFIG_KSU_SUSFS=y"
+          fi
+
+          echo ""
+          echo "=== LOCALVERSION ==="
+          grep "^CONFIG_LOCALVERSION" $F || echo "(未设置)"
       - name: 6. 编译内核
         run: |
           set -e
