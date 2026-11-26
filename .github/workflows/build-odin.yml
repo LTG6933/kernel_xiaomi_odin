@@ -20,9 +20,7 @@ jobs:
           set -e
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y clang-18 lld-18 llvm-18 gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu gcc-arm-linux-gnueabi bc bison flex libssl-dev libelf-dev python3 zip unzip cpio xz-utils git curl
-          echo "--- clang ---"
           clang-18 --version
-          echo "--- cross gcc ---"
           aarch64-linux-gnu-gcc --version | head -1
 
       - name: 2.5 Upgrade SUSFS to v2.3.0
@@ -47,7 +45,7 @@ jobs:
           echo "=== 补 BakaSU 需要的 CMD ==="
           if ! grep -q "CMD_SUSFS_SET_SUS_PATH_UID_FILTER" include/linux/susfs_def.h; then
             printf '\n/* compat: required by BakaSU v4.2.0-rc3 */\n#define CMD_SUSFS_SET_SUS_PATH_UID_FILTER 0x55554\n' >> include/linux/susfs_def.h
-            echo ">>> patched"
+            echo ">>> patched CMD"
           fi
           grep -n "UID_FILTER" include/linux/susfs_def.h | head -5
 
@@ -57,7 +55,7 @@ jobs:
           echo "  current_uid().val: $(grep -c 'current_uid().val' fs/susfs.c include/linux/susfs_def.h 2>/dev/null | awk -F: '{s+=$2}END{print s+0}')"
 
       - name: 3. Integrate BakaSU
-        run: |
+              run: |
           set -e
           rm -rf KernelSU
           git clone --depth=1 https://github.com/Baka-SU/BakaSU.git KernelSU
@@ -79,11 +77,28 @@ jobs:
           sed -i 's/\bksu_input_hook\b/susfs_compat_input/g' drivers/input/input.c
           sed -i 's/\bksu_execveat_hook\b/susfs_compat_execveat/g' fs/exec.c
           sed -i 's/^extern bool susfs_compat_\([a-z_]*\) __read_mostly;/static bool susfs_compat_\1 __read_mostly = true;/' fs/read_write.c fs/stat.c drivers/input/input.c fs/exec.c
-                    grep -n "susfs_compat_" fs/read_write.c fs/stat.c drivers/input/input.c fs/exec.c | head
+          grep -n "susfs_compat_" fs/read_write.c fs/stat.c drivers/input/input.c fs/exec.c | head
           if grep -qw "ksu_init_rc_hook\|ksu_input_hook\|ksu_execveat_hook\|ksu_vfs_read_hook" fs/read_write.c fs/stat.c drivers/input/input.c fs/exec.c; then
             echo "STILL HAS LEGACY HOOK"; exit 1
           fi
           echo ">>> legacy hooks neutralized"
+
+      - name: 3.6 Align avc.c to static_key
+        run: |
+          set -e
+          echo "=== before ==="
+          grep -n "susfs_is_avc_log_spoofing_enabled" security/selinux/avc.c || echo "(none)"
+
+          sed -i 's/^bool susfs_is_avc_log_spoofing_enabled = false;$/extern struct static_key_false susfs_is_avc_log_spoofing_enabled;/' security/selinux/avc.c
+          sed -i 's/READ_ONCE(susfs_is_avc_log_spoofing_enabled)/static_branch_unlikely(\&susfs_is_avc_log_spoofing_enabled)/g' security/selinux/avc.c
+
+          if ! grep -q "jump_label" security/selinux/avc.c; then
+            sed -i '0,/#include <linux\/avc.h>/s//#include <linux\/avc.h>\n#include <linux\/jump_label.h>/' security/selinux/avc.c
+          fi
+
+          echo "=== after ==="
+          grep -n "susfs_is_avc_log_spoofing_enabled" security/selinux/avc.c
+          echo ">>> avc.c aligned"
 
       - name: 4. Build
         run: |
@@ -116,7 +131,7 @@ jobs:
           $CFG --file $F --enable  KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
           $CFG --file $F --enable  KSU_SUSFS_SUS_MAP
           $CFG --file $F --disable KSU_SUSFS_OPEN_REDIRECT
-          $CFG --file $F --disable KSU_SUSFS_ENABLE_LOG
+                    $CFG --file $F --disable KSU_SUSFS_ENABLE_LOG
 
           $CFG --file $F --disable LOCALVERSION_AUTO
           $CFG --file $F --set-str LOCALVERSION "-qgki-odin-QiuChenly"
@@ -152,7 +167,7 @@ jobs:
           echo "##### ksu .o count #####"
           find out -path "*kernelsu*" -name "*.o" 2>/dev/null | wc -l || true
           echo "##### errors #####"
-          grep -nE "error:|Error [0-9]|undefined reference|You lost|You should integrate|can't open|fatal" build.log 2>/dev/null | head -50 || echo "(none)"
+          grep -nE "error:|Error [0-9]|undefined reference|multiple definition|You lost|can't open|fatal" build.log 2>/dev/null | head -50 || echo "(none)"
           echo "##### tail #####"
           tail -30 build.log 2>/dev/null || true
 
@@ -166,7 +181,7 @@ jobs:
           rm -rf .git
           sed -i 's/^kernel.string=.*/kernel.string=BakaSU+SUSFS230 odin/' anykernel.sh
           sed -i 's/^device.name1=.*/device.name1=odin/' anykernel.sh
-                    sed -i 's/^device.name2=.*/device.name2=MIX4/' anykernel.sh
+          sed -i 's/^device.name2=.*/device.name2=MIX4/' anykernel.sh
           cp $GITHUB_WORKSPACE/Image-odin ./Image
           zip -r9 $GITHUB_WORKSPACE/odin-BakaSU-SUSFS230.zip *
           cd $GITHUB_WORKSPACE
