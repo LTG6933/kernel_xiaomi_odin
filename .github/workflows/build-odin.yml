@@ -8,11 +8,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     steps:
-      - name: 1. Checkout resukisu
+      - name: 1. Checkout sukisu (hook 匹配 BakaSU)
         uses: actions/checkout@v4
         with:
           repository: Inkypen79/kernel_xiaomi_odin
-          ref: resukisu
+          ref: sukisu
           fetch-depth: 1
 
       - name: 2. Toolchain
@@ -27,61 +27,85 @@ jobs:
           set -e
           SRC=https://raw.githubusercontent.com/shadichy/susfs4ksu/master/kernel_patches
 
-          echo "=== 备份 2.1.0 ==="
-          cp fs/susfs.c fs/susfs.c.210
-          cp include/linux/susfs.h include/linux/susfs.h.210
-          [ -f include/linux/susfs_def.h ] && cp include/linux/susfs_def.h include/linux/susfs_def.h.210 || true
+          echo "=== 备份 2.0.0 ==="
+          cp fs/susfs.c fs/susfs.c.orig
+          cp include/linux/susfs.h include/linux/susfs.h.orig
+          [ -f include/linux/susfs_def.h ] && cp include/linux/susfs_def.h include/linux/susfs_def.h.orig || true
+          echo "原版本:"
+          grep -m1 SUSFS_VERSION include/linux/susfs.h || true
 
           echo "=== 下载 2.4.0 ==="
           curl -fsSL "$SRC/fs/susfs.c" -o fs/susfs.c
           curl -fsSL "$SRC/include/linux/susfs.h" -o include/linux/susfs.h
-          curl -fsSL "$SRC/include/linux/susfs_def.h" -o include/linux/susfs_def.h || echo "(2.4.0 无独立 susfs_def.h，使用 2.1.0 的)"
+          curl -fsSL "$SRC/include/linux/susfs_def.h" -o include/linux/susfs_def.h || echo "(2.4.0 无独立 def.h)"
 
-          echo "=== 版本确认 ==="
-          grep -m1 "SUSFS_VERSION" include/linux/susfs.h || echo "WARN: 无版本宏"
-          ls -la fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
+          echo "=== 新版本 ==="
+          grep -m1 SUSFS_VERSION include/linux/susfs.h || echo "WARN no version macro"
+          ls -la fs/susfs.c include/linux/susfs.h
+          wc -c fs/susfs.c
 
-      - name: 3. Integrate BakaSU
+      - name: 3. Integrate BakaSU (manual)
         run: |
           set -e
-          git clone --depth=1 https://github.com/Baka-SU/BakaSU.git /tmp/BakaSU
-          sh /tmp/BakaSU/kernel/setup.sh
+          rm -rf KernelSU
+          git clone --depth=1 https://github.com/Baka-SU/BakaSU.git KernelSU
+          rm -f drivers/kernelsu
+          ln -sfn ../KernelSU/kernel drivers/kernelsu
           ls -la drivers/kernelsu
+          test -f drivers/kernelsu/Kconfig || { echo "FAIL: Kconfig unreachable"; ls -la KernelSU/kernel/|head; exit 1; }
+          head -3 drivers/kernelsu/Kconfig
+          grep -q "kernelsu" drivers/Makefile || printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
+          grep -n kernelsu drivers/Makefile
+          grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig || sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          grep -n 'drivers/kernelsu/Kconfig' drivers/Kconfig
+          echo ">>> BakaSU integrated"
 
-      - name: 3.5 Fix hooks
+      - name: 3.5 Neutralize legacy bool hooks
         run: |
           set -e
-          # resukisu 的 stat.c 只有 ksu_handle_fstat，BakaSU 要 vfs_fstat
-          grep -n "ksu_handle_fstat" fs/stat.c || true
-          sed -i 's/\bksu_handle_fstat\b/ksu_handle_vfs_fstat/g' fs/stat.c
-          grep -n "ksu_handle_vfs_fstat" fs/stat.c || { echo "FAIL: stat hook"; exit 1; }
-
-          # 旧 hook 清理
-          for f in fs/read_write.c fs/stat.c drivers/input/input.c fs/exec.c; do
-            sed -i 's/\bksu_init_rc_hook\b/susfs_compat_init_rc/g; s/\bksu_input_hook\b/susfs_compat_input/g; s/\bksu_execveat_hook\b/susfs_compat_execveat/g' $f
-          done
-                    sed -i 's/^extern bool susfs_compat_\([a-z_]*\) __read_mostly;/static bool susfs_compat_\1 __read_mostly = true;/' fs/read_write.c fs/stat.c drivers/input/input.c fs/exec.c
-          echo ">>> hooks fixed"
+          sed -i 's/\bksu_init_rc_hook\b/susfs_compat_init_rc/g' fs/read_write.c fs/stat.c
+          sed -i 's/\bksu_input_hook\b/susfs_compat_input/g' drivers/input/input.c
+          sed -i 's/\bksu_execveat_hook\b/susfs_compat_execveat/g' fs/exec.c
+          sed -i 's/^extern bool susfs_compat_\([a-z_]*\) __read_mostly;/static bool susfs_compat_\1 __read_mostly = true;/' fs/read_write.c fs/stat.c drivers/input/input.c fs/exec.c
+          grep -n "susfs_compat_" fs/read_write.c fs/stat.c drivers/input/input.c fs/exec.c | head
+          if grep -qw "ksu_init_rc_hook\|ksu_input_hook\|ksu_execveat_hook\|ksu_vfs_read_hook" fs/read_write.c fs/stat.c drivers/input/input.c fs/exec.c; then
+            echo "STILL HAS LEGACY HOOK"; exit 1
+          fi
+          echo ">>> legacy hooks neutralized"
 
       - name: 4. Build
         run: |
           set -eo pipefail
-          export ARCH=arm64 CC=clang-18 CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu-
+          export ARCH=arm64
+          export CC=clang-18
+                    export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export CLANG_TRIPLE=aarch64-linux-gnu-
           export PATH=/usr/lib/llvm-18/bin:$PATH
 
+          echo "###### 4.1 defconfig ######"
           make O=out odin_defconfig < /dev/null
-          CFG=./scripts/config; F=out/.config
+          wc -l out/.config
+
+          echo "###### 4.2 patch config ######"
+          CFG=./scripts/config
+          F=out/.config
 
           $CFG --file $F --enable KSU
           $CFG --file $F --disable KSU_TRACEPOINT_HOOK
           $CFG --file $F --disable KSU_MANUAL_HOOK
           $CFG --file $F --enable  KSU_SUSFS
-          for o in SUS_PATH SUS_MOUNT SUS_KSTAT SPOOF_UNAME HIDE_KSU_SUSFS_SYMBOLS SPOOF_CMDLINE_OR_BOOTCONFIG SUS_MAP; do
-            $CFG --file $F --enable KSU_SUSFS_$o
-          done
+
+          $CFG --file $F --enable  KSU_SUSFS_SUS_PATH
+          $CFG --file $F --enable  KSU_SUSFS_SUS_MOUNT
+          $CFG --file $F --enable  KSU_SUSFS_SUS_KSTAT
+          $CFG --file $F --enable  KSU_SUSFS_SPOOF_UNAME
+          $CFG --file $F --enable  KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          $CFG --file $F --enable  KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+          $CFG --file $F --enable  KSU_SUSFS_SUS_MAP
           $CFG --file $F --disable KSU_SUSFS_OPEN_REDIRECT
           $CFG --file $F --disable KSU_SUSFS_ENABLE_LOG
+
           $CFG --file $F --disable LOCALVERSION_AUTO
           $CFG --file $F --set-str LOCALVERSION "-qgki-odin-QiuChenly"
           $CFG --file $F --disable LTO_CLANG
@@ -89,17 +113,59 @@ jobs:
           $CFG --file $F --disable MODULE_SIG_FORCE
           $CFG --file $F --disable MODULE_SIG_ALL
 
+          echo "###### 4.3 olddefconfig ######"
           make O=out olddefconfig < /dev/null
-          grep -E "^CONFIG_KSU|SUSFS|^CONFIG_LOCALVERSION" $F || true
-          grep -q "^CONFIG_KSU_SUSFS=y" $F || { echo "FAIL SUSFS"; exit 1; }
 
+          echo "###### 4.4 verify ######"
+          grep -E "^CONFIG_KSU|SUSFS|^CONFIG_LOCALVERSION" $F || true
+          echo "---"
+          grep -q "^CONFIG_KSU=y"       $F || { echo "FAIL: KSU";   exit 1; }
+          grep -q "^CONFIG_KSU_SUSFS=y" $F || { echo "FAIL: SUSFS"; exit 1; }
+          grep -q '^CONFIG_LOCALVERSION="-qgki-odin-QiuChenly"' $F || { echo "FAIL: LOCALVERSION"; exit 1; }
+          echo ">>> config OK"
+
+          echo "###### 4.5 build Image ######"
           make O=out -j$(nproc) Image < /dev/null 2>&1 | tee build.log
+
+          echo "###### 4.6 result ######"
           ls -la out/arch/arm64/boot/
 
       - name: 5. Diagnose
         if: always()
         run: |
+          echo "##### Image #####"
           find out -name "Image*" -type f 2>/dev/null | head || true
+          echo "##### susfs objects #####"
           find out -name "susfs*.o" 2>/dev/null | head || true
-          grep -nE "error:|Error [0-9]|undefined reference|You lost|fatal" build.log 2>/dev/null | head -50 || echo "(none)"
-          tail -30 build.log 2>/dev/null || true
+          echo "##### ksu objects #####"
+          find out -path "*kernelsu*" -name "*.o" 2>/dev/null | head -10 || true
+          echo "##### ALL errors #####"
+          grep -nE "error:|Error [0-9]|undefined reference|You lost|You should integrate|can't open|fatal" build.log 2>/dev/null | head -50 || echo "(none)"
+          echo "##### tail #####"
+          tail -40 build.log 2>/dev/null || true
+
+      - name: 6. Package
+        if: success()
+        run: |
+          set -e
+          cp out/arch/arm64/boot/Image ./Image-odin
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git /tmp/AK3
+          cd /tmp/AK3
+          rm -rf .git
+          sed -i 's/^kernel.string=.*/kernel.string=BakaSU+SUSFS240 odin/' anykernel.sh
+          sed -i 's/^device.name1=.*/device.name1=odin/' anykernel.sh
+          sed -i 's/^device.name2=.*/device.name2=MIX4/' anykernel.sh
+          cp $GITHUB_WORKSPACE/Image-odin ./Image
+          zip -r9 $GITHUB_WORKSPACE/odin-BakaSU-SUSFS240.zip *
+          cd $GITHUB_WORKSPACE
+          ls -la Image-odin odin-BakaSU-SUSFS240.zip
+
+      - name: 7. Upload
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: odin-BakaSU-SUSFS240
+          path: |
+            Image-odin
+            odin-BakaSU-SUSFS240.zip
+            build.log
