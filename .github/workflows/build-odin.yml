@@ -115,11 +115,22 @@ jobs:
           else
             echo "  SSBS 已存在或文件缺失"
           fi
-          # 2) / 3) 打印实际内容供诊断
-          echo "=== 诊断：oom_kill.c 760-780 ==="
-          sed -n '760,780p' mm/oom_kill.c 2>/dev/null || echo "(文件不存在)"
-          echo "=== 诊断：fair.c 11505-11525 ==="
-          sed -n '11505,11525p' kernel/sched/fair.c 2>/dev/null || echo "(文件不存在)"
+          # 2) oom_kill.c: 补丁用了 cred 但没声明，在 oom_group 后加
+          OK2=mm/oom_kill.c
+          if [ -f "$OK2" ] && ! grep -q "struct cred \*cred;" "$OK2"; then
+            sed -i 's|^\tstruct mem_cgroup \*oom_group;$|\tstruct mem_cgroup *oom_group;\n\tstruct cred *cred;|' "$OK2"
+          fi
+          echo "  cred 声明检查:"
+          grep -n "struct cred \*cred;" "$OK2" | head -3 || echo "  WARN 未插入"
+
+          # 3) fair.c: static 冲突（去掉 static）
+          SF=kernel/sched/fair.c
+          if [ -f "$SF" ]; then
+            sed -i 's|^static int sched_balance_newidle(|int sched_balance_newidle(|' "$SF"
+            sed -i 's|^static void sched_balance_newidle(|void sched_balance_newidle(|' "$SF"
+          fi
+          echo "  fair.c newidle 检查:"
+          grep -n "sched_balance_newidle" "$SF" 2>/dev/null | head -5 || echo "  (无)"
           echo "  诊断信息已输出"
 
           echo "=== 5.1 pgtable ==="
