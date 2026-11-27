@@ -32,24 +32,23 @@ jobs:
           clang --version | head -1
           aarch64-linux-gnu-gcc --version | head -1
 
-      - name: 4. Integrate BakaSU
+      - name: 4. Integrate BakaSU via symlink
         run: |
           set -e
           cd $GITHUB_WORKSPACE
-          rm -rf kernel/drivers/kernelsu kernel/KernelSU
+          rm -rf kernel/drivers/kernelsu kernel/KernelSU bakasu
           git clone https://github.com/Baka-SU/BakaSU.git bakasu
           cd bakasu
+          echo "BakaSU HEAD: $(git log -1 --format='%h %s')"
           CNT=$(git rev-list --count HEAD)
           echo "BakaSU version code = $((30000 + CNT + 700))"
           cd ..
-          # 关键：用 symlink 而不是拷贝（BakaSU 的 Kbuild 检查 ../.git）
           mv bakasu kernel/KernelSU
           ln -sfn ../KernelSU/kernel kernel/drivers/kernelsu
           ls -la kernel/drivers/kernelsu
-          ls kernel/drivers/kernelsu/ | head -15
           test -f kernel/drivers/kernelsu/Kconfig || { echo "FAIL Kconfig"; exit 1; }
-          echo "=== .git 检查 ==="
-          test -e kernel/KernelSU/.git && echo "  KernelSU/.git OK" || { echo "  KernelSU/.git MISSING"; exit 1; }
+          test -e kernel/KernelSU/.git || { echo "FAIL .git missing"; exit 1; }
+          echo ">>> .git OK"
           grep -q 'drivers/kernelsu/Kconfig' kernel/drivers/Kconfig || sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' kernel/drivers/Kconfig
           grep -n 'drivers/kernelsu/Kconfig' kernel/drivers/Kconfig
           grep -q 'kernelsu' kernel/drivers/Makefile || printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> kernel/drivers/Makefile
@@ -60,14 +59,14 @@ jobs:
           set -e
           cd $GITHUB_WORKSPACE/kernel
           DRV=drivers/kernelsu
-          echo "=== handle_inode_event ==="
-          grep -rn "handle_inode_event" $DRV 2>/dev/null | head -5 || echo "  none"
-          echo "=== pgtable ==="
+
+          echo "=== 5.1 pgtable ==="
           for f in $(grep -rln 'linux/pgtable.h' $DRV 2>/dev/null); do
             sed -i 's|#include <linux/pgtable.h>|#include <asm/pgtable.h>|' "$f"
             echo "  fixed: $f"
           done
-          echo "=== compat header ==="
+
+          echo "=== 5.2 compat header ==="
           echo "I2lmbmRlZiBfX0tTVV9DT01QQVQ1NF9ICiNkZWZpbmUgX19LU1VfQ09NUEFUNTRfSAojaW5jbHVkZSA8bGludXgvdmVyc2lvbi5oPgojaW5jbHVkZSA8bGludXgvdWFjY2Vzcy5oPgojaWYgTElOVVhfVkVSU0lPTl9DT0RFIDwgS0VSTkVMX1ZFUlNJT04oNSwgOCwgMCkKc3RhdGljIGlubGluZSBsb25nIGtzdTU0X3N0cm5jcHlfZnJvbV91c2VyX25vZmF1bHQoY2hhciAqZHN0LCBjb25zdCB2b2lkIF9fdXNlciAqc3JjLCBsb25nIG4pCnsgcmV0dXJuIHByb2JlX3VzZXJfcmVhZChkc3QsIHNyYywgbik7IH0Kc3RhdGljIGlubGluZSBsb25nIGtzdTU0X2NvcHlfZnJvbV91c2VyX25vZmF1bHQodm9pZCAqZHN0LCBjb25zdCB2b2lkIF9fdXNlciAqc3JjLCBzaXplX3QgbikKeyByZXR1cm4gcHJvYmVfdXNlcl9yZWFkKGRzdCwgc3JjLCBuKTsgfQpzdGF0aWMgaW5saW5lIGxvbmcga3N1NTRfY29weV90b191c2VyX25vZmF1bHQodm9pZCBfX3VzZXIgKmRzdCwgY29uc3Qgdm9pZCAqc3JjLCBzaXplX3QgbikKeyByZXR1cm4gcHJvYmVfa2VybmVsX3dyaXRlKCh2b2lkICopZHN0LCBzcmMsIG4pOyB9CiNkZWZpbmUgc3RybmNweV9mcm9tX3VzZXJfbm9mYXVsdCBrc3U1NF9zdHJuY3B5X2Zyb21fdXNlcl9ub2ZhdWx0CiNkZWZpbmUgY29weV9mcm9tX3VzZXJfbm9mYXVsdCBrc3U1NF9jb3B5X2Zyb21fdXNlcl9ub2ZhdWx0CiNkZWZpbmUgY29weV90b191c2VyX25vZmF1bHQga3N1NTRfY29weV90b191c2VyX25vZmF1bHQKI2VuZGlmCiNlbmRpZgo=" | base64 -d > $DRV/ku_compat54.h
           head -3 $DRV/ku_compat54.h
           for kf in $DRV/Kbuild $DRV/Makefile; do
@@ -76,16 +75,18 @@ jobs:
               echo "  compat -> $kf"
             fi
           done
+
+          echo "=== 5.3 relax -Werror ==="
           sed -i 's/-Werror/-Wno-error/g' $DRV/Kbuild 2>/dev/null || true
-          echo "=== fix lz4p asm.h __has_feature ==="
+
+          echo "=== 5.4 fix lz4p asm.h __has_feature ==="
           LZ=drivers/block/zram/lz4p/asm.h
           if [ -f "$LZ" ] && ! grep -q "__has_feature(x) 0" "$LZ"; then
             printf '#ifndef __has_feature\n#define __has_feature(x) 0\n#endif\n' | cat - "$LZ" > "$LZ.tmp" && mv "$LZ.tmp" "$LZ"
-            head -4 "$LZ"
-            echo "  lz4p asm.h patched"
+            echo "  lz4p patched"
           fi
-          grep -rn "__has_feature" drivers/block/zram/lz4p/ 2>/dev/null | head -5 || true
-          echo "=== fix broken techpack headers（内容是路径的 .h）==="
+
+          echo "=== 5.5 fix broken techpack headers ==="
           CNT=0
           for f in $(find techpack -name '*.h' -size -400c 2>/dev/null); do
             c=$(cat "$f" 2>/dev/null | tr -d '\r\n')
@@ -97,23 +98,20 @@ jobs:
             esac
           done
           echo "  fixed $CNT headers"
-          echo "=== 检查 pinctrl-utils.h ==="
-          head -2 techpack/audio/soc/pinctrl-utils.h 2>/dev/null || true
-          echo "=== add missing CMD macros ==="
-          if ! grep -q "CMD_SUSFS_SET_PRIORITY_UID_FILTER" include/linux/susfs.h; then
-            printf '\n#ifndef CMD_SUSFS_SET_PRIORITY_UID_FILTER\n#define CMD_SUSFS_SET_PRIORITY_UID_FILTER 0x60030\n#endif\n' >> include/linux/susfs.h
-            echo "  CMD_SUSFS_SET_PRIORITY_UID_FILTER added"
-          fi
-          grep -n "PRIORITY_UID_FILTER\|SUS_PATH_UID_FILTER" include/linux/susfs.h | head -5
-          echo "=== susfs stubs ==="
-          echo "CmludCBzdXNmc19hZGRfc3VzX3R5cGUoY29uc3QgY2hhciAqc2VjY3R4LCB1MzIgdHlwZV92YWx1ZSkgeyByZXR1cm4gMDsgfQppbnQgc3VzZnNfYWRkX3N1c19hdmRfYWxsb3dlZF9ieV90eXBlKHUzMiBzLCB1MzIgdCwgdTE2IHR5LCB1MzIgbykgeyByZXR1cm4gMDsgfQp2b2lkIHN1c2ZzX3NldF9wcmlvcml0eV91aWRfZmlsdGVyKHZvaWQgX191c2VyICoqdWkpIHsgfQp2b2lkIHN1c2ZzX3BhcnNlX3ByaW9yaXR5X2FwcF9zdHJpbmdzKHZvaWQpIHsgfQo=" | base64 -d >> fs/susfs.c
-          echo "CiNpZm5kZWYgQ01EX1NVU0ZTX1NFVF9TVVNfUEFUSF9VSURfRklMVEVSCiNkZWZpbmUgQ01EX1NVU0ZTX1NFVF9TVVNfUEFUSF9VSURfRklMVEVSIDB4NTU1NTQKI2VuZGlmCmludCBzdXNmc19hZGRfc3VzX3R5cGUoY29uc3QgY2hhciAqc2VjY3R4LCB1MzIgdHlwZV92YWx1ZSk7CmludCBzdXNmc19hZGRfc3VzX2F2ZF9hbGxvd2VkX2J5X3R5cGUodTMyIHMsIHUzMiB0LCB1MTYgdHksIHUzMiBvKTsKdm9pZCBzdXNmc19zZXRfcHJpb3JpdHlfdWlkX2ZpbHRlcih2b2lkIF9fdXNlciAqKnVpKTsKdm9pZCBzdXNmc19wYXJzZV9wcmlvcml0eV9hcHBfc3RyaW5ncyh2b2lkKTsK" | base64 -d >> include/linux/susfs.h
-          tail -5 include/linux/susfs.h
-          echo "=== add rekernel netlink globals ==="
-          echo "Ci8qID09PT09PT09PT09PSByZWtlcm5lbCBuZXRsaW5rIGdsb2JhbHMgPT09PT09PT09PT09ICovCiNpZmRlZiBDT05GSUdfS1NVCnN0cnVjdCBzb2NrOwpzdHJ1Y3Qgc29jayAqcmVrZXJuZWxfbmV0bGluayA9IE5VTEw7CmludCByZWtlcm5lbF9uZXRsaW5rX3VuaXQgPSAwOwojZW5kaWYK" | base64 -d >> fs/susfs.c
-          echo "=== add SUSFS 2.3 API stubs ==="
-          echo "Ci8qID09PT09PT09PT09PSBDSSBjb21wYXQgc3R1YnMgKFNVU0ZTIDIuMSAtPiAyLjMgQVBJKSA9PT09PT09PT09PT0gKi8KYm9vbCBzdXNmc19pc19jdXJyZW50X3Byb2Nfbm9fc3Uodm9pZCkgeyByZXR1cm4gZmFsc2U7IH0Kdm9pZCBzdXNmc19zZXRfY3VycmVudF9wcm9jX25vX3N1KHZvaWQpIHsgfQp2b2lkIHN1c2ZzX2NsZWFyX2N1cnJlbnRfcHJvY19ub19zdSh2b2lkKSB7IH0Kdm9pZCBzdXNmc19zZXRfY3VycmVudF9wcm9jX3Vtb3VudGVkX2Zvcl96eWdvdGVfbmV4dCh2b2lkKSB7IH0Kdm9pZCBzdXNmc19wYXJzZV9zdXNfcGF0aF9hcHBfc3RyaW5ncyh2b2lkICphKSB7ICh2b2lkKWE7IH0Kdm9pZCBzdXNmc19zZXRfc3VzX3BhdGhfdWlkX2ZpbHRlcih2b2lkICphKSB7ICh2b2lkKWE7IH0KaW50ICBzdXNmc19hZGRfc3VzX3R5cGUoY29uc3QgY2hhciAqc2VjY3R4LCB1MzIgdHlwZV92YWx1ZSkgeyAodm9pZClzZWNjdHg7ICh2b2lkKXR5cGVfdmFsdWU7IHJldHVybiAwOyB9CmludCAgc3VzZnNfYWRkX3N1c19hdmRfYWxsb3dlZF9ieV90eXBlKHUzMiBzLCB1MzIgdCwgdTE2IHR5LCB1MzIgbykgeyAodm9pZClzOyh2b2lkKXQ7KHZvaWQpdHk7KHZvaWQpbzsgcmV0dXJuIDA7IH0Kdm9pZCBzdXNmc19zZXRfcHJpb3JpdHlfdWlkX2ZpbHRlcih2b2lkICphKSB7ICh2b2lkKWE7IH0Kdm9pZCBzdXNmc19wYXJzZV9wcmlvcml0eV9hcHBfc3RyaW5ncyh2b2lkKSB7IH0K" | base64 -d >> fs/susfs.c
+
+          echo "=== 5.6 CMD macros ==="
+          printf '\n#ifndef CMD_SUSFS_SET_SUS_PATH_UID_FILTER\n#define CMD_SUSFS_SET_SUS_PATH_UID_FILTER 0x55554\n#endif\n' >> include/linux/susfs.h
+          printf '\n#ifndef CMD_SUSFS_SET_PRIORITY_UID_FILTER\n#define CMD_SUSFS_SET_PRIORITY_UID_FILTER 0x60030\n#endif\n' >> include/linux/susfs.h
+          grep -n "SUS_PATH_UID_FILTER\|PRIORITY_UID_FILTER" include/linux/susfs.h | head -5
+
+          echo "=== 5.7 v13 stubs (add_sus_type / priority) ==="
+          echo "Ci8qIC0tLS0gQ0kgc3R1YnMgYmF0Y2ggQSAtLS0tICovCmludCBzdXNmc19hZGRfc3VzX3R5cGUoY29uc3QgY2hhciAqc2VjY3R4LCB1MzIgdHlwZV92YWx1ZSkgeyAodm9pZClzZWNjdHg7ICh2b2lkKXR5cGVfdmFsdWU7IHJldHVybiAwOyB9CmludCBzdXNmc19hZGRfc3VzX2F2ZF9hbGxvd2VkX2J5X3R5cGUodTMyIHMsIHUzMiB0LCB1MTYgdHksIHUzMiBvKSB7ICh2b2lkKXM7KHZvaWQpdDsodm9pZCl0eTsodm9pZClvOyByZXR1cm4gMDsgfQp2b2lkIHN1c2ZzX3NldF9wcmlvcml0eV91aWRfZmlsdGVyKHZvaWQgX191c2VyICoqdWkpIHsgKHZvaWQpdWk7IH0Kdm9pZCBzdXNmc19wYXJzZV9wcmlvcml0eV9hcHBfc3RyaW5ncyh2b2lkKSB7IH0K" | base64 -d >> fs/susfs.c
+          grep -c "susfs_add_sus_type" fs/susfs.c
+
+          echo "=== 5.8 v18 stubs (2.3 API + rekernel) ==="
+          echo "Ci8qID09PT09PT09PT09PSBDSSBjb21wYXQ6IFNVU0ZTIDIuMSAtPiAyLjMgbWlzc2luZyBBUEkgPT09PT09PT09PT09ICovCmJvb2wgc3VzZnNfaXNfY3VycmVudF9wcm9jX25vX3N1KHZvaWQpIHsgcmV0dXJuIGZhbHNlOyB9CnZvaWQgc3VzZnNfc2V0X2N1cnJlbnRfcHJvY19ub19zdSh2b2lkKSB7IH0Kdm9pZCBzdXNmc19jbGVhcl9jdXJyZW50X3Byb2Nfbm9fc3Uodm9pZCkgeyB9CnZvaWQgc3VzZnNfc2V0X2N1cnJlbnRfcHJvY191bW91bnRlZF9mb3Jfenlnb3RlX25leHQodm9pZCkgeyB9CnZvaWQgc3VzZnNfcGFyc2Vfc3VzX3BhdGhfYXBwX3N0cmluZ3Modm9pZCAqYSkgeyAodm9pZClhOyB9CnZvaWQgc3VzZnNfc2V0X3N1c19wYXRoX3VpZF9maWx0ZXIodm9pZCAqYSkgeyAodm9pZClhOyB9CnN0cnVjdCBzb2NrOwpzdHJ1Y3Qgc29jayAqcmVrZXJuZWxfbmV0bGluayA9IE5VTEw7CmludCByZWtlcm5lbF9uZXRsaW5rX3VuaXQgPSAwOwo=" | base64 -d >> fs/susfs.c
           grep -c "susfs_is_current_proc_no_su\|rekernel_netlink" fs/susfs.c
+
           echo ">>> compat done"
 
       - name: 6. Configure
@@ -142,16 +140,15 @@ jobs:
           $CFG --file $F --enable KSU_SUSFS_SUS_MAP
           $CFG --file $F --disable KSU_SUSFS_OPEN_REDIRECT
           $CFG --file $F --disable KSU_SUSFS_ENABLE_LOG
+          $CFG --file $F --disable SPECULATIVE_PAGE_FAULT
           $CFG --file $F --disable LOCALVERSION_AUTO
           $CFG --file $F --set-str LOCALVERSION "-qgki-odin-QiuChenly"
           $CFG --file $F --disable MODULE_SIG
           $CFG --file $F --disable MODULE_SIG_FORCE
           $CFG --file $F --disable MODULE_SIG_ALL
-          # 关键：关掉 SPF（原版未开，且和小米改的 mm.h 冲突）
-          $CFG --file $F --disable SPECULATIVE_PAGE_FAULT
           make O=out olddefconfig < /dev/null
           echo "=== verify ==="
-          grep -E "^CONFIG_KSU|^CONFIG_LOCALVERSION|^CONFIG_MODVERSIONS|^CONFIG_CC_IS_CLANG|SPECULATIVE_PAGE_FAULT" $F || true
+          grep -E "^CONFIG_KSU|^CONFIG_LOCALVERSION|^CONFIG_MODVERSIONS|^CONFIG_CC_IS_CLANG|SPECULATIVE" $F || true
           grep -q "^CONFIG_KSU=y" $F || { echo "FAIL KSU"; exit 1; }
           grep -q "^CONFIG_KSU_SUSFS=y" $F || { echo "FAIL SUSFS"; exit 1; }
           echo ">>> config OK"
@@ -166,7 +163,7 @@ jobs:
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export KCFLAGS="-Wno-error=maybe-uninitialized -Wno-error=implicit-fallthrough -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=misleading-indentation -Wno-error=address-of-packed-member"
-          make O=out -j$(nproc) Image 2>&1 | tee build.log | tail -60 || true
+          make O=out -j$(nproc) Image 2>&1 | tee build.log | tail -80 || true
           echo "=== result ==="
           ls -lh out/arch/arm64/boot/Image* 2>/dev/null || echo "no Image"
           stat -c "IMAGE SIZE: %s" out/arch/arm64/boot/Image 2>/dev/null || echo "IMAGE SIZE: 0"
@@ -183,19 +180,10 @@ jobs:
           find out -name "susfs*.o" 2>/dev/null | head || true
           echo "##### ksu .o count #####"
           find out -path "*kernelsu*" -name "*.o" 2>/dev/null | wc -l || true
-          echo "##### error 行汇总 #####"
-          grep -nE "^.*error:" build.log 2>/dev/null | head -30 || echo "(none)"
-          echo "##### kernelsu 错误上下文 #####"
-          grep -n "drivers/kernelsu" build.log 2>/dev/null | head -5
-          L=$(grep -n "drivers/kernelsu.*error" build.log 2>/dev/null | head -1 | cut -d: -f1)
-          if [ -n "$L" ]; then
-            sed -n "$((L>30?L-30:1)),$((L+10))p" build.log | tail -45
-          else
-            grep -n -B8 "drivers/kernelsu\] Error" build.log 2>/dev/null | tail -30 || true
-          fi
-          echo "##### 最后一个 error 前 30 行 #####"
-          L2=$(grep -nE "error:" build.log 2>/dev/null | tail -1 | cut -d: -f1)
-          if [ -n "$L2" ]; then sed -n "$((L2>30?L2-30:1)),$((L2+3))p" build.log; fi
+          echo "##### 所有 error: 行 #####"
+          grep -nE "error:" build.log 2>/dev/null | head -25 || echo "(none)"
+          echo "##### undefined reference 去重 #####"
+          grep "undefined reference" build.log 2>/dev/null | sed 's/.*undefined reference to //' | sort -u | head -25 || echo "(none)"
           echo "##### tail #####"
           tail -30 build.log 2>/dev/null || true
 
