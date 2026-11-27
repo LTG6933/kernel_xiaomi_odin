@@ -129,8 +129,11 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           export CLANG_TRIPLE=aarch64-linux-gnu-
-          make O=out odin_defconfig < /dev/null
+          MAKEOPTS="ARCH=arm64 CC=clang LD=ld.lld CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+          make O=out $MAKEOPTS odin_defconfig < /dev/null
           wc -l out/.config
+          echo "=== 编译器检测 ==="
+          grep -E "CONFIG_CC_IS" out/.config || echo "(defconfig 阶段还没有)"
           CFG=./scripts/config
           F=out/.config
           $CFG --file $F --enable KSU
@@ -152,7 +155,14 @@ jobs:
           $CFG --file $F --disable MODULE_SIG
           $CFG --file $F --disable MODULE_SIG_FORCE
           $CFG --file $F --disable MODULE_SIG_ALL
-          make O=out olddefconfig < /dev/null
+          make O=out $MAKEOPTS olddefconfig < /dev/null
+          echo "=== 编译器检测 ==="
+          grep -E "CONFIG_CC_IS_CLANG|CONFIG_CC_IS_GCC|CONFIG_LD_IS" out/.config || echo "(none)"
+          if ! grep -q "^CONFIG_CC_IS_CLANG=y" out/.config; then
+            echo "WARNING: NOT using clang!"
+          else
+            echo ">>> clang OK"
+          fi
           echo "=== verify ==="
           grep -E "^CONFIG_KSU|^CONFIG_LOCALVERSION|^CONFIG_MODVERSIONS|^CONFIG_CC_IS_CLANG|SPECULATIVE" $F || true
           grep -q "^CONFIG_KSU=y" $F || { echo "FAIL KSU"; exit 1; }
@@ -169,7 +179,8 @@ jobs:
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export KCFLAGS="-Wno-error=maybe-uninitialized -Wno-error=implicit-fallthrough -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=misleading-indentation -Wno-error=address-of-packed-member"
-          make O=out -j$(nproc) Image 2>&1 | tee build.log | tail -80 || true
+          MAKEOPTS="ARCH=arm64 CC=clang LD=ld.lld CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+          make O=out $MAKEOPTS -j$(nproc) Image 2>&1 | tee build.log | tail -80 || true
           echo "=== result ==="
           ls -lh out/arch/arm64/boot/Image* 2>/dev/null || echo "no Image"
           stat -c "IMAGE SIZE: %s" out/arch/arm64/boot/Image 2>/dev/null || echo "IMAGE SIZE: 0"
