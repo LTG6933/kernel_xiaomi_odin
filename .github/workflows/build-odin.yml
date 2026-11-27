@@ -105,24 +105,22 @@ jobs:
           sed -i 's|^obj-\$(CONFIG_ARCH_QCOM) += techpack/|# obj-$(CONFIG_ARCH_QCOM) += techpack/|' Makefile
           grep -n "techpack" Makefile | head -5 || echo "  Makefile 已无 techpack 引用"
 
-          echo "=== 5.0b 修 5.4.302 补丁产生的 3 个不一致 ==="
-          # 1) ARM64_WORKAROUND_SPECULATIVE_SSBS 未定义
-          CCH=arch/arm64/include/asm/cpufeature.h
+          echo "=== 5.0b 修 5.4.302 补丁产生的错误 ==="
+          # 1) ARM64_WORKAROUND_SPECULATIVE_SSBS（cpucaps.h 是 #define，不是枚举）
+          CCH=arch/arm64/include/asm/cpucaps.h
           if [ -f "$CCH" ] && ! grep -q "ARM64_WORKAROUND_SPECULATIVE_SSBS" "$CCH"; then
-            sed -i 's|\(ARM64_WORKAROUND_SPECULATIVE_AT_NVHE,\)|\1\n\tARM64_WORKAROUND_SPECULATIVE_SSBS,|' "$CCH"
-            grep -n "ARM64_WORKAROUND_SPECULATIVE_SSBS" "$CCH" || echo "  WARN: 未能插入 SSBS 枚举"
+            sed -i 's|^#define ARM64_NCAPS\b|#define ARM64_WORKAROUND_SPECULATIVE_SSBS\t51\n#define ARM64_NCAPS|' "$CCH"
+            echo "  插入结果:"
+            grep -n "SPECULATIVE_SSBS\|ARM64_NCAPS" "$CCH"
+          else
+            echo "  SSBS 已存在或文件缺失"
           fi
-          # 2) oom_kill.c 的 cred 类型（加 struct 关键字或用变量）
-          OK2=mm/oom_kill.c
-          if [ -f "$OK2" ]; then
-            sed -i 's|^\s*cred;|\tstruct cred *cred;|' "$OK2" 2>/dev/null || true
-          fi
-          # 3) fair.c 的 static 冲突
-          SF=kernel/sched/fair.c
-          if [ -f "$SF" ]; then
-            sed -i 's|^static int sched_balance_newidle|int sched_balance_newidle|' "$SF"
-          fi
-          echo "  3 个不一致已尝试修复"
+          # 2) / 3) 打印实际内容供诊断
+          echo "=== 诊断：oom_kill.c 760-780 ==="
+          sed -n '760,780p' mm/oom_kill.c 2>/dev/null || echo "(文件不存在)"
+          echo "=== 诊断：fair.c 11505-11525 ==="
+          sed -n '11505,11525p' kernel/sched/fair.c 2>/dev/null || echo "(文件不存在)"
+          echo "  诊断信息已输出"
 
           echo "=== 5.1 pgtable ==="
           for f in $(grep -rln 'linux/pgtable.h' $DRV 2>/dev/null); do
