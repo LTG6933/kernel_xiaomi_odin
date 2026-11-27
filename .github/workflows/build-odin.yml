@@ -140,8 +140,17 @@ jobs:
           MAKEOPTS="ARCH=arm64 CC=clang LD=ld.lld CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           make O=out $MAKEOPTS odin_defconfig < /dev/null
           wc -l out/.config
-          echo "=== 编译器检测 ==="
-          grep -E "CONFIG_CC_IS" out/.config || echo "(defconfig 阶段还没有)"
+
+          echo "=== 下载原版内核配置（与原版内核完全一致）==="
+          curl -fsSL "https://raw.githubusercontent.com/LTG6933/kernel_xiaomi_odin/lineage-24.0/odin_orig.config.gz" -o /tmp/orig.config.gz
+          gunzip -c /tmp/orig.config.gz > /tmp/orig.config
+          wc -l /tmp/orig.config
+          echo "=== 用原版配置覆盖 ==="
+          cp /tmp/orig.config out/.config
+          wc -l out/.config
+          echo "=== 原版规模基准 ==="
+          echo -n "  原版 =y 数量: "; grep -c "^CONFIG_.*=y$" out/.config
+          echo -n "  原版 =m 数量: "; grep -c "^CONFIG_.*=m$" out/.config
           CFG=./scripts/config
           F=out/.config
           $CFG --file $F --enable KSU
