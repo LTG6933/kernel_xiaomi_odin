@@ -99,6 +99,12 @@ jobs:
           done
           echo "  fixed $CNT headers"
 
+          echo "=== 5.55 fix fake_state -> selinux_state ==="
+          grep -rn "fake_state" security/selinux/ 2>/dev/null | head -5 || echo "  no fake_state"
+          sed -i 's|\bfake_state\b|selinux_state|g' security/selinux/selinuxfs.c security/selinux/hooks.c 2>/dev/null || true
+          echo "  after fix:"
+          grep -rn "fake_state" security/selinux/ 2>/dev/null | head -3 || echo "  (cleared)"
+
           echo "=== 5.6 CMD macros ==="
           printf '\n#ifndef CMD_SUSFS_SET_SUS_PATH_UID_FILTER\n#define CMD_SUSFS_SET_SUS_PATH_UID_FILTER 0x55554\n#endif\n' >> include/linux/susfs.h
           printf '\n#ifndef CMD_SUSFS_SET_PRIORITY_UID_FILTER\n#define CMD_SUSFS_SET_PRIORITY_UID_FILTER 0x60030\n#endif\n' >> include/linux/susfs.h
