@@ -36,16 +36,20 @@ jobs:
         run: |
           set -e
           cd $GITHUB_WORKSPACE
-          rm -rf kernel/drivers/kernelsu
-          git clone --depth=1 https://github.com/Baka-SU/BakaSU.git bakasu
+          rm -rf kernel/drivers/kernelsu kernel/KernelSU
+          git clone https://github.com/Baka-SU/BakaSU.git bakasu
           cd bakasu
           CNT=$(git rev-list --count HEAD)
           echo "BakaSU version code = $((30000 + CNT + 700))"
           cd ..
-          mkdir -p kernel/drivers/kernelsu
-          rsync -a bakasu/kernel/ kernel/drivers/kernelsu/
-          ls kernel/drivers/kernelsu | head -15
+          # 关键：用 symlink 而不是拷贝（BakaSU 的 Kbuild 检查 ../.git）
+          mv bakasu kernel/KernelSU
+          ln -sfn ../KernelSU/kernel kernel/drivers/kernelsu
+          ls -la kernel/drivers/kernelsu
+          ls kernel/drivers/kernelsu/ | head -15
           test -f kernel/drivers/kernelsu/Kconfig || { echo "FAIL Kconfig"; exit 1; }
+          echo "=== .git 检查 ==="
+          test -e kernel/KernelSU/.git && echo "  KernelSU/.git OK" || { echo "  KernelSU/.git MISSING"; exit 1; }
           grep -q 'drivers/kernelsu/Kconfig' kernel/drivers/Kconfig || sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' kernel/drivers/Kconfig
           grep -n 'drivers/kernelsu/Kconfig' kernel/drivers/Kconfig
           grep -q 'kernelsu' kernel/drivers/Makefile || printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> kernel/drivers/Makefile
@@ -136,7 +140,7 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           export CLANG_TRIPLE=aarch64-linux-gnu-
-          export KCFLAGS="-Wno-error=implicit-fallthrough -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=misleading-indentation -Wno-error=address-of-packed-member"
+          export KCFLAGS="-Wno-error=maybe-uninitialized -Wno-error=implicit-fallthrough -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=misleading-indentation -Wno-error=address-of-packed-member"
           make O=out -j$(nproc) Image 2>&1 | tee build.log | tail -60 || true
           echo "=== result ==="
           ls -lh out/arch/arm64/boot/Image* 2>/dev/null || echo "no Image"
