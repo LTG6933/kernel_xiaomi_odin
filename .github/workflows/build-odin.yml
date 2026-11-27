@@ -134,9 +134,8 @@ jobs:
           echo "###### 4.3 adjust ######"
           CFG=./scripts/config
           F=out/.config
-          $CFG --file $F --disable KSU_TRACEPOINT_HOOK
-          $CFG --file $F --disable KSU_MANUAL_HOOK
-          $CFG --file $F --enable  KSU_SUSFS
+          # 纯内核测试：完全关闭 KSU，验证基础内核能否启动
+          $CFG --file $F --disable KSU
           # 保持源码原样版本号（5.4.302），不再伪装成 5.10
           $CFG --file $F --disable LOCALVERSION_AUTO
           $CFG --file $F --set-str LOCALVERSION "-qgki-odin-QiuChenly"
@@ -158,8 +157,8 @@ jobs:
             echo ">>> WARNING: NOT clang!"
             grep "^CONFIG_CC_IS" $F || echo "(none)"
           fi
-          grep -q "^CONFIG_KSU=y" $F || { echo "FAIL KSU"; exit 1; }
-          grep -q "^CONFIG_KSU_SUSFS=y" $F || { echo "FAIL SUSFS"; exit 1; }
+          if grep -q "^CONFIG_KSU=y" $F; then echo "FAIL: KSU still enabled"; exit 1; fi
+          echo ">>> KSU disabled (pure kernel test)"
           if grep -q "^CONFIG_MODVERSIONS=y" $F; then echo "FAIL: MODVERSIONS still y"; exit 1; fi
           echo ">>> MODVERSIONS disabled OK"
 
