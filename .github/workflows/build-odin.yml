@@ -169,6 +169,9 @@ jobs:
           $CFG --file $F --disable SPECULATIVE_PAGE_FAULT
           # liqidecg 的 cpuset.c 有 CS 扩展代码，需要这个开关
           $CFG --file $F --enable CPUSET_ASSIST
+          # 公开源码缺 qseecom_kernel.h，关闭 SMCINVOKE（TEE 接口，原版有但源码缺失）
+          $CFG --file $F --disable QCOM_SMCINVOKE
+          echo "  SMCINVOKE: $(grep '^CONFIG_QCOM_SMCINVOKE' $F || echo 'not set')"
           # liqidecg 的其他小米扩展（原版未开但代码存在）
           $CFG --file $F --enable BINDER_PRIO 2>/dev/null || true
           $CFG --file $F --enable CAM_RECLAIM 2>/dev/null || true
