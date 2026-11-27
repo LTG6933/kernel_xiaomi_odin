@@ -168,6 +168,12 @@ jobs:
           $CFG --file $F --disable KSU_SUSFS_ENABLE_LOG
           $CFG --file $F --disable SPECULATIVE_PAGE_FAULT
           # liqidecg 的 cpuset.c 有 CS 扩展代码，需要这个开关
+          # 关闭 liqidecg 源码里的小米私有框架（原版内核没有这些）
+          for opt in MIHW MILLET_BINDER MILLET_BINDER_GKI MILLET_CGROUP MILLET_CORE MILLET_HS MILLET_PKG MILLET_SIG TOUCHSCREEN_COMMON F2FS_IOSTAT POLLY_CLANG DISABLE_TRACE_PRINTK; do
+            $CFG --file $F --disable $opt 2>/dev/null || true
+          done
+          echo "=== 小米框架关闭结果 ==="
+          grep -E "^CONFIG_MIHW|^CONFIG_MILLET" $F || echo "  (all off)"
           $CFG --file $F --enable CPUSET_ASSIST
           # 公开源码缺 qseecom_kernel.h，关闭 SMCINVOKE（TEE 接口，原版有但源码缺失）
           $CFG --file $F --disable QCOM_SMCINVOKE
