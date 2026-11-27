@@ -1,0 +1,193 @@
+name: Build odin 5.4.281 BakaSU+SUSFS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    steps:
+      - name: 1. Pull Xiaomi HyperOS 5.4.281 kernel with SUSFS
+        run: |
+          set -e
+          git clone --depth=1 -b main https://github.com/liqidecg/xiaomi_kernel_odin.git kernel
+          cd kernel
+          head -4 Makefile | tr '\n' ' '; echo
+          grep -m2 "SUSFS_VERSION" include/linux/susfs.h || true
+          ls -la fs/susfs.c
+
+      - name: 2. Pull KSU driver from MrNya907
+        run: |
+          set -e
+          git clone --depth=1 -b master https://github.com/MrNya907/xiaomi_kernel_odin.git ksusr
+          test -f ksusr/drivers/kernelsu/Kconfig || { echo "FAIL no Kconfig"; exit 1; }
+          echo ">>> KSU driver OK"
+
+      - name: 3. Toolchain
+        run: |
+          set -e
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bc bison flex libssl-dev libelf-dev gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu device-tree-compiler python3 zip lz4 zstd git curl rsync clang lld llvm
+          clang --version | head -1
+          aarch64-linux-gnu-gcc --version | head -1
+
+      - name: 4. Integrate BakaSU
+        run: |
+          set -e
+          cd $GITHUB_WORKSPACE
+          rm -rf kernel/drivers/kernelsu kernel/KernelSU
+          git clone https://github.com/Baka-SU/BakaSU.git bakasu
+          cd bakasu
+          CNT=$(git rev-list --count HEAD)
+          echo "BakaSU version code = $((30000 + CNT + 700))"
+          cd ..
+          # 关键：用 symlink 而不是拷贝（BakaSU 的 Kbuild 检查 ../.git）
+          mv bakasu kernel/KernelSU
+          ln -sfn ../KernelSU/kernel kernel/drivers/kernelsu
+          ls -la kernel/drivers/kernelsu
+          ls kernel/drivers/kernelsu/ | head -15
+          test -f kernel/drivers/kernelsu/Kconfig || { echo "FAIL Kconfig"; exit 1; }
+          echo "=== .git 检查 ==="
+          test -e kernel/KernelSU/.git && echo "  KernelSU/.git OK" || { echo "  KernelSU/.git MISSING"; exit 1; }
+          grep -q 'drivers/kernelsu/Kconfig' kernel/drivers/Kconfig || sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' kernel/drivers/Kconfig
+          grep -n 'drivers/kernelsu/Kconfig' kernel/drivers/Kconfig
+          grep -q 'kernelsu' kernel/drivers/Makefile || printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> kernel/drivers/Makefile
+          grep -n 'kernelsu' kernel/drivers/Makefile
+
+      - name: 5. 5.4 compat fixes
+        run: |
+          set -e
+          cd $GITHUB_WORKSPACE/kernel
+          DRV=drivers/kernelsu
+          echo "=== handle_inode_event ==="
+          grep -rn "handle_inode_event" $DRV 2>/dev/null | head -5 || echo "  none"
+          echo "=== pgtable ==="
+          for f in $(grep -rln 'linux/pgtable.h' $DRV 2>/dev/null); do
+            sed -i 's|#include <linux/pgtable.h>|#include <asm/pgtable.h>|' "$f"
+            echo "  fixed: $f"
+          done
+          echo "=== compat header ==="
+          echo "I2lmbmRlZiBfX0tTVV9DT01QQVQ1NF9ICiNkZWZpbmUgX19LU1VfQ09NUEFUNTRfSAojaW5jbHVkZSA8bGludXgvdmVyc2lvbi5oPgojaW5jbHVkZSA8bGludXgvdWFjY2Vzcy5oPgojaWYgTElOVVhfVkVSU0lPTl9DT0RFIDwgS0VSTkVMX1ZFUlNJT04oNSwgOCwgMCkKc3RhdGljIGlubGluZSBsb25nIGtzdTU0X3N0cm5jcHlfZnJvbV91c2VyX25vZmF1bHQoY2hhciAqZHN0LCBjb25zdCB2b2lkIF9fdXNlciAqc3JjLCBsb25nIG4pCnsgcmV0dXJuIHByb2JlX3VzZXJfcmVhZChkc3QsIHNyYywgbik7IH0Kc3RhdGljIGlubGluZSBsb25nIGtzdTU0X2NvcHlfZnJvbV91c2VyX25vZmF1bHQodm9pZCAqZHN0LCBjb25zdCB2b2lkIF9fdXNlciAqc3JjLCBzaXplX3QgbikKeyByZXR1cm4gcHJvYmVfdXNlcl9yZWFkKGRzdCwgc3JjLCBuKTsgfQpzdGF0aWMgaW5saW5lIGxvbmcga3N1NTRfY29weV90b191c2VyX25vZmF1bHQodm9pZCBfX3VzZXIgKmRzdCwgY29uc3Qgdm9pZCAqc3JjLCBzaXplX3QgbikKeyByZXR1cm4gcHJvYmVfa2VybmVsX3dyaXRlKCh2b2lkICopZHN0LCBzcmMsIG4pOyB9CiNkZWZpbmUgc3RybmNweV9mcm9tX3VzZXJfbm9mYXVsdCBrc3U1NF9zdHJuY3B5X2Zyb21fdXNlcl9ub2ZhdWx0CiNkZWZpbmUgY29weV9mcm9tX3VzZXJfbm9mYXVsdCBrc3U1NF9jb3B5X2Zyb21fdXNlcl9ub2ZhdWx0CiNkZWZpbmUgY29weV90b191c2VyX25vZmF1bHQga3N1NTRfY29weV90b191c2VyX25vZmF1bHQKI2VuZGlmCiNlbmRpZgo=" | base64 -d > $DRV/ku_compat54.h
+          head -3 $DRV/ku_compat54.h
+          for kf in $DRV/Kbuild $DRV/Makefile; do
+            if [ -f "$kf" ] && ! grep -q ku_compat54.h "$kf"; then
+              printf 'ccflags-y += -include $(srctree)/%s/ku_compat54.h\n' "$DRV" >> "$kf"
+              echo "  compat -> $kf"
+            fi
+          done
+          sed -i 's/-Werror/-Wno-error/g' $DRV/Kbuild 2>/dev/null || true
+          echo "=== fix lz4p asm.h __has_feature ==="
+          LZ=drivers/block/zram/lz4p/asm.h
+          if [ -f "$LZ" ] && ! grep -q "__has_feature(x) 0" "$LZ"; then
+            printf '#ifndef __has_feature\n#define __has_feature(x) 0\n#endif\n' | cat - "$LZ" > "$LZ.tmp" && mv "$LZ.tmp" "$LZ"
+            head -4 "$LZ"
+            echo "  lz4p asm.h patched"
+          fi
+          grep -rn "__has_feature" drivers/block/zram/lz4p/ 2>/dev/null | head -5 || true
+          echo "=== susfs stubs ==="
+          echo "CmludCBzdXNmc19hZGRfc3VzX3R5cGUoY29uc3QgY2hhciAqc2VjY3R4LCB1MzIgdHlwZV92YWx1ZSkgeyByZXR1cm4gMDsgfQppbnQgc3VzZnNfYWRkX3N1c19hdmRfYWxsb3dlZF9ieV90eXBlKHUzMiBzLCB1MzIgdCwgdTE2IHR5LCB1MzIgbykgeyByZXR1cm4gMDsgfQp2b2lkIHN1c2ZzX3NldF9wcmlvcml0eV91aWRfZmlsdGVyKHZvaWQgX191c2VyICoqdWkpIHsgfQp2b2lkIHN1c2ZzX3BhcnNlX3ByaW9yaXR5X2FwcF9zdHJpbmdzKHZvaWQpIHsgfQo=" | base64 -d >> fs/susfs.c
+          echo "CiNpZm5kZWYgQ01EX1NVU0ZTX1NFVF9TVVNfUEFUSF9VSURfRklMVEVSCiNkZWZpbmUgQ01EX1NVU0ZTX1NFVF9TVVNfUEFUSF9VSURfRklMVEVSIDB4NTU1NTQKI2VuZGlmCmludCBzdXNmc19hZGRfc3VzX3R5cGUoY29uc3QgY2hhciAqc2VjY3R4LCB1MzIgdHlwZV92YWx1ZSk7CmludCBzdXNmc19hZGRfc3VzX2F2ZF9hbGxvd2VkX2J5X3R5cGUodTMyIHMsIHUzMiB0LCB1MTYgdHksIHUzMiBvKTsKdm9pZCBzdXNmc19zZXRfcHJpb3JpdHlfdWlkX2ZpbHRlcih2b2lkIF9fdXNlciAqKnVpKTsKdm9pZCBzdXNmc19wYXJzZV9wcmlvcml0eV9hcHBfc3RyaW5ncyh2b2lkKTsK" | base64 -d >> include/linux/susfs.h
+          tail -5 include/linux/susfs.h
+          echo ">>> compat done"
+
+      - name: 6. Configure
+        run: |
+          set -eo pipefail
+          cd $GITHUB_WORKSPACE/kernel
+          export ARCH=arm64
+          export CC=clang
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          make O=out odin_defconfig < /dev/null
+          wc -l out/.config
+          CFG=./scripts/config
+          F=out/.config
+          $CFG --file $F --enable KSU
+          $CFG --file $F --disable KSU_TRACEPOINT_HOOK
+          $CFG --file $F --disable KSU_MANUAL_HOOK
+          $CFG --file $F --enable KSU_SUSFS
+          $CFG --file $F --enable KSU_SUSFS_SUS_PATH
+          $CFG --file $F --enable KSU_SUSFS_SUS_MOUNT
+          $CFG --file $F --enable KSU_SUSFS_SUS_KSTAT
+          $CFG --file $F --enable KSU_SUSFS_SPOOF_UNAME
+          $CFG --file $F --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          $CFG --file $F --enable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+          $CFG --file $F --enable KSU_SUSFS_SUS_MAP
+          $CFG --file $F --disable KSU_SUSFS_OPEN_REDIRECT
+          $CFG --file $F --disable KSU_SUSFS_ENABLE_LOG
+          $CFG --file $F --disable LOCALVERSION_AUTO
+          $CFG --file $F --set-str LOCALVERSION "-qgki-odin-QiuChenly"
+          $CFG --file $F --disable MODULE_SIG
+          $CFG --file $F --disable MODULE_SIG_FORCE
+          $CFG --file $F --disable MODULE_SIG_ALL
+          # 关键：关掉 SPF（原版未开，且和小米改的 mm.h 冲突）
+          $CFG --file $F --disable SPECULATIVE_PAGE_FAULT
+          make O=out olddefconfig < /dev/null
+          echo "=== verify ==="
+          grep -E "^CONFIG_KSU|^CONFIG_LOCALVERSION|^CONFIG_MODVERSIONS|^CONFIG_CC_IS_CLANG|SPECULATIVE_PAGE_FAULT" $F || true
+          grep -q "^CONFIG_KSU=y" $F || { echo "FAIL KSU"; exit 1; }
+          grep -q "^CONFIG_KSU_SUSFS=y" $F || { echo "FAIL SUSFS"; exit 1; }
+          echo ">>> config OK"
+
+      - name: 7. Build
+        run: |
+          set -o pipefail
+          cd $GITHUB_WORKSPACE/kernel
+          export ARCH=arm64
+          export CC=clang
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export KCFLAGS="-Wno-error=maybe-uninitialized -Wno-error=implicit-fallthrough -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=misleading-indentation -Wno-error=address-of-packed-member"
+          make O=out -j$(nproc) Image 2>&1 | tee build.log | tail -60 || true
+          echo "=== result ==="
+          ls -lh out/arch/arm64/boot/Image* 2>/dev/null || echo "no Image"
+          stat -c "IMAGE SIZE: %s" out/arch/arm64/boot/Image 2>/dev/null || echo "IMAGE SIZE: 0"
+          echo "ORIG SIZE : 40321536"
+          strings out/arch/arm64/boot/Image 2>/dev/null | grep -m1 "^Linux version" || true
+
+      - name: 8. Diagnose
+        if: always()
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          echo "##### Image #####"
+          find out -name "Image*" -type f 2>/dev/null | head || true
+          echo "##### susfs.o #####"
+          find out -name "susfs*.o" 2>/dev/null | head || true
+          echo "##### ksu .o count #####"
+          find out -path "*kernelsu*" -name "*.o" 2>/dev/null | wc -l || true
+          echo "##### error 行汇总 #####"
+          grep -nE "^.*error:" build.log 2>/dev/null | head -30 || echo "(none)"
+          echo "##### kernelsu 错误上下文 #####"
+          grep -n "drivers/kernelsu" build.log 2>/dev/null | head -5
+          L=$(grep -n "drivers/kernelsu.*error" build.log 2>/dev/null | head -1 | cut -d: -f1)
+          if [ -n "$L" ]; then
+            sed -n "$((L>30?L-30:1)),$((L+10))p" build.log | tail -45
+          else
+            grep -n -B8 "drivers/kernelsu\] Error" build.log 2>/dev/null | tail -30 || true
+          fi
+          echo "##### 最后一个 error 前 30 行 #####"
+          L2=$(grep -nE "error:" build.log 2>/dev/null | tail -1 | cut -d: -f1)
+          if [ -n "$L2" ]; then sed -n "$((L2>30?L2-30:1)),$((L2+3))p" build.log; fi
+          echo "##### tail #####"
+          tail -30 build.log 2>/dev/null || true
+
+      - name: 9. Package
+        if: always()
+        run: |
+          cd $GITHUB_WORKSPACE
+          mkdir -p dist
+          cp kernel/out/arch/arm64/boot/Image dist/Image-odin 2>/dev/null || true
+          cp kernel/out/.config dist/config.txt 2>/dev/null || true
+          cp kernel/build.log dist/ 2>/dev/null || true
+          ls -lh dist
+
+      - name: 10. Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: odin-541-bakasu
+          path: dist/
+          retention-days: 7
