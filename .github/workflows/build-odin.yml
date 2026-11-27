@@ -17,6 +17,41 @@ jobs:
           grep -m2 "SUSFS_VERSION" include/linux/susfs.h || true
           ls -la fs/susfs.c
 
+      - name: 1.5 Upgrade 5.4.281 -> 5.4.302 (kernel.org stable patches)
+        run: |
+          set -e
+          cd $GITHUB_WORKSPACE/kernel
+          echo "=== 升级前 ==="
+          head -4 Makefile | tr '\n' ' '; echo
+          OK=0; FAIL=0
+          for v in $(seq 282 302); do
+            prev=$((v-1))
+            url="https://cdn.kernel.org/pub/linux/kernel/v5.x/incr/patch-5.4.${prev}-${v}.xz"
+            if curl -sSL --max-time 60 "$url" -o /tmp/p.xz 2>/dev/null && [ -s /tmp/p.xz ]; then
+              if xz -dc /tmp/p.xz 2>/dev/null | patch -p1 --forward --no-backup-if-mismatch --reject-file=- > /tmp/patch_out.txt 2>&1; then
+                OK=$((OK+1))
+              else
+                # 有冲突但部分应用也算前进
+                if grep -q "^patching file" /tmp/patch_out.txt 2>/dev/null; then
+                  OK=$((OK+1))
+                else
+                  FAIL=$((FAIL+1))
+                  echo "  [FAIL] 5.4.${prev} -> ${v}"
+                fi
+              fi
+            else
+              FAIL=$((FAIL+1))
+              echo "  [SKIP] 5.4.${prev}-${v} 下载失败"
+            fi
+          done
+          echo "=== 升级结果: 成功 $OK 个, 失败 $FAIL 个 ==="
+          head -4 Makefile | tr '\n' ' '; echo
+          echo "=== 版本号确认 ==="
+          grep -E "^VERSION|^PATCHLEVEL|^SUBLEVEL" Makefile
+          echo "=== 清理 .rej/.orig ==="
+          find . -name "*.rej" -delete 2>/dev/null || true
+          find . -name "*.orig" -delete 2>/dev/null || true
+
       - name: 2. Pull KSU driver from MrNya907
         run: |
           set -e
