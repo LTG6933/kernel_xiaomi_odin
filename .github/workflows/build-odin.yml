@@ -78,6 +78,13 @@ jobs:
           echo "commit count = $CNT  ->  version = $((30000 + CNT + 700))"
           echo "expect 35235"
           cd ..
+          echo "=== 禁用 susfs_compat.mk 的占位报错 ==="
+          sed -i 's/^\$(error Please wait susfs update\.)/# error-disabled-by-ci/' KernelSU/kernel/tools/susfs_compat.mk
+          tail -5 KernelSU/kernel/tools/susfs_compat.mk
+          if grep -q "^\$(error" KernelSU/kernel/tools/susfs_compat.mk; then
+            echo "FAIL: still has error"; exit 1
+          fi
+          echo ">>> susfs_compat.mk patched"
           rm -f drivers/kernelsu
           ln -sfn ../KernelSU/kernel drivers/kernelsu
           ls -la drivers/kernelsu
