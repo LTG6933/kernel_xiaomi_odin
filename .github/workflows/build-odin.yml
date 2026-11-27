@@ -115,13 +115,18 @@ jobs:
           else
             echo "  SSBS 已存在或文件缺失"
           fi
-          # 2) oom_kill.c: 补丁用了 cred 但没声明，在 oom_group 后加
+          # 2) oom_kill.c: 补丁用了 cred 但没声明（用 awk，不依赖缩进）
           OK2=mm/oom_kill.c
-          if [ -f "$OK2" ] && ! grep -q "struct cred \*cred;" "$OK2"; then
-            sed -i 's|^\tstruct mem_cgroup \*oom_group;$|\tstruct mem_cgroup *oom_group;\n\tstruct cred *cred;|' "$OK2"
+          echo "  处理前 oom_group 行:"
+          grep -n "struct mem_cgroup \*oom_group;" "$OK2" | head -3 | cat -A | head -3
+          if ! grep -q "struct cred \*cred;" "$OK2"; then
+            awk '{print} /struct mem_cgroup \*oom_group;/ && !d {print "\tstruct cred *cred;"; d=1}' "$OK2" > "$OK2.new" && mv "$OK2.new" "$OK2"
+            echo "  awk 插入完成"
           fi
-          echo "  cred 声明检查:"
-          grep -n "struct cred \*cred;" "$OK2" | head -3 || echo "  WARN 未插入"
+          echo "  处理后 cred 声明:"
+          grep -n "struct cred \*cred;" "$OK2" | head -3 || echo "  WARN 仍未插入"
+          echo "  处理后上下文:"
+          grep -n -A3 "struct mem_cgroup \*oom_group;" "$OK2" | head -6
 
           # 3) fair.c: static 冲突（去掉 static）
           SF=kernel/sched/fair.c
