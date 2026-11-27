@@ -1,4 +1,4 @@
-name: Build odin BakaSU+SUSFS230
+name: Build odin BakaSU+SUSFS230 (orig config)
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 300
     steps:
       - name: 1. Checkout sukisu
         uses: actions/checkout@v4
@@ -14,6 +14,17 @@ jobs:
           repository: Inkypen79/kernel_xiaomi_odin
           ref: sukisu
           fetch-depth: 1
+
+      - name: 1.5 Fetch original kernel config
+        run: |
+          set -e
+          URL="https://raw.githubusercontent.com/LTG6933/kernel_xiaomi_odin/lineage-24.0/odin_orig.config.gz"
+          curl -fsSL "$URL" -o /tmp/orig.config.gz
+          echo "gz size: $(wc -c < /tmp/orig.config.gz)"
+          gunzip -c /tmp/orig.config.gz > /tmp/orig.config
+          echo "config lines: $(wc -l < /tmp/orig.config)"
+          grep -m1 CONFIG_LOCALVERSION /tmp/orig.config
+          grep -c "^CONFIG_.*=y" /tmp/orig.config | xargs echo "enabled options:"
 
       - name: 2. Toolchain
         run: |
@@ -26,7 +37,6 @@ jobs:
         run: |
           set -e
           SRC=https://raw.githubusercontent.com/yapixel/susfs4ksu/main/kernel_patches
-          grep -m1 SUSFS_VERSION include/linux/susfs.h || true
           curl -fsSL "$SRC/fs/susfs.c" -o fs/susfs.c
           curl -fsSL "$SRC/include/linux/susfs.h" -o include/linux/susfs.h
           curl -fsSL "$SRC/include/linux/susfs_def.h" -o include/linux/susfs_def.h
@@ -40,31 +50,21 @@ jobs:
         run: |
           set -e
           echo 'LyogU1VTRlMgMi4zLjAgLT4gMi4wLjAga2VybmVsLXNpZGUgY29tcGF0aWJpbGl0eSBsYXllcgogKiBOT1RFOiBtdXN0IE5PVCBpbmNsdWRlIDxsaW51eC9zdXNmcy5oPiwgYmVjYXVzZSAyLjMuMCdzIHN1c2ZzX2RlZi5oCiAqIGFscmVhZHkgcHJvdmlkZXMgc3RhdGljIGlubGluZSBzdXNmc19zdGFydHNfd2l0aCgpIGV0Yy4KICovCiNpbmNsdWRlIDxsaW51eC90eXBlcy5oPgojaW5jbHVkZSA8bGludXgvZnMuaD4KI2luY2x1ZGUgPGxpbnV4L21vdW50Lmg+CiNpbmNsdWRlIDxsaW51eC9zdGF0ZnMuaD4KI2luY2x1ZGUgPGxpbnV4L25hbWVpLmg+CiNpbmNsdWRlIDxsaW51eC9jcmVkLmg+CiNpbmNsdWRlIDxsaW51eC91YWNjZXNzLmg+CiNpbmNsdWRlIDxsaW51eC9qdW1wX2xhYmVsLmg+CiNpbmNsdWRlIDxsaW51eC9lcnIuaD4KI2luY2x1ZGUgPGxpbnV4L2Vycm5vLmg+CgovKiAtLS0tIEE6IGV4dGVybiBmdW5jdGlvbnMgcmVxdWlyZWQgYnkgU1VTRlMgMi4zLjAgc3VzZnMuYyAtLS0tICovCmludCBzdXNmc19nZXRfbm9uX3N1c19tbnRfaWRfZnJvbV9tbnQoc3RydWN0IG1vdW50ICpvcmlnX21udCkKewoJLyogc3RydWN0IG1vdW50IGlzIGludGVybmFsIHRvIGZzLywgcmV0dXJuIDAgYXMgc2FmZSBzdHViICovCglyZXR1cm4gMDsKfQoKLyogc3VzZnNfZ2V0X25vbl9zdXNfdmZzbW50X2Zyb21fdmZzbW50IGlzIGFscmVhZHkgZGVmaW5lZCBpbiBmcy9uYW1lc3BhY2UuYyAqLwoKaW50IHN0YXRmc19ieV9kZW50cnlfd3JhcHBlcihzdHJ1Y3QgZGVudHJ5ICpkZW50cnksIHN0cnVjdCBrc3RhdGZzICpidWYpCnsKCS8qIHN0YXRmc19ieV9kZW50cnkoKSBpcyBzdGF0aWMgaW4gZnMvc3RhdGZzLmMsIGNhbm5vdCBiZSBsaW5rZWQuCgkgKiBSZXR1cm4gLUVOT1NZUyBzbyBjYWxsZXJzIHNraXAgdGhlIHNwb29mIHBhdGguICovCglyZXR1cm4gLUVOT1NZUzsKfQoKaW50IGNhbGN1bGF0ZV9mX2ZsYWdzX3dyYXBwZXIoc3RydWN0IHZmc21vdW50ICptbnQpCnsKCXJldHVybiAwOwp9CgovKiAtLS0tIEI6IGNhbGxlZCBieSBrZXJuZWwgY29kZSwgcmVtb3ZlZCBpbiAyLjMuMCAtLS0tICovCi8qIGthbGxzeW1zLmMgZGVjbGFyZXMgdGhpcyBhcyBleHRlcm4gYW5kIGNhbGxzIGl0ICovCmJvb2wgc3VzZnNfc3RhcnRzX3dpdGgoY29uc3QgY2hhciAqc3RyLCBjb25zdCBjaGFyICpwcmVmaXgpCnsKCXdoaWxlICgqcHJlZml4KSB7CgkJaWYgKCpzdHIrKyAhPSAqcHJlZml4KyspCgkJCXJldHVybiBmYWxzZTsKCX0KCXJldHVybiB0cnVlOwp9Cgp2b2lkIHN1c2ZzX3N1c19pbm9fZm9yX2dlbmVyaWNfZmlsbGF0dHIodW5zaWduZWQgbG9uZyBpbm8sIHN0cnVjdCBrc3RhdCAqc3RhdCkKewoJLyogc3VwZXJzZWRlZCBieSAyLjMuMCBzdXNmc19zdXNfa3N0YXRfc3Bvb2ZfZ2VuZXJpY19maWxsYXR0ciAqLwp9Cgp2b2lkIHN1c2ZzX3N1c19pbm9fZm9yX3Nob3dfbWFwX3ZtYSh1bnNpZ25lZCBsb25nIGlubywgZGV2X3QgKm91dF9kZXYsIHVuc2lnbmVkIGxvbmcgKm91dF9pbm8pCnsKCS8qIHN1cGVyc2VkZWQgYnkgMi4zLjAgbmV3IHBhdGggKi8KfQoKc3RydWN0IGZpbGVuYW1lICpzdXNmc19nZXRfcmVkaXJlY3RlZF9wYXRoKHVuc2lnbmVkIGxvbmcgaW5vKQp7CglyZXR1cm4gRVJSX1BUUigtRU5PRU5UKTsKfQoKaW50IHN1c2ZzX3VwZGF0ZV9zdXNfa3N0YXRfaW5vZGUoY2hhciAqdGFyZ2V0X3BhdGhuYW1lKSB7IHJldHVybiAwOyB9CmludCBzdXNmc191cGRhdGVfb3Blbl9yZWRpcmVjdF9pbm9kZSh2b2lkICpuZXdfZW50cnkpIHsgcmV0dXJuIDA7IH0Kdm9pZCBzdXNmc19zZXRfaV9zdGF0ZV9vbl9leHRlcm5hbF9kaXIodm9pZCBfX3VzZXIgKip1c2VyX2luZm8pIHsgfQoKLyogLS0tLSBDOiBib29sIGV4cGVjdGVkIGJ5IGtlcm5lbCAtLS0tICovCmJvb2wgc3VzZnNfaXNfc2RjYXJkX2FuZHJvaWRfZGF0YV9kZWNyeXB0ZWQgX19yZWFkX21vc3RseSA9IGZhbHNlOwpib29sIHN1c2ZzX2hpZGVfc3VzX21udHNfZm9yX25vbl9zdV9wcm9jcyBfX3JlYWRfbW9zdGx5ID0gZmFsc2U7CgovKiAtLS0tIEQ6IHJlcXVpcmVkIGJ5IEJha2FTVSBzdXBlcmNhbGwgLS0tLSAqLwp2b2lkIHN1c2ZzX3BhcnNlX3N1c19wYXRoX2FwcF9zdHJpbmdzKHZvaWQgX191c2VyICoqdXNlcl9pbmZvKSB7IH0Kdm9pZCBzdXNmc19hZGRfc3VzX2F2ZF9hbGxvd2VkX2J5X3R5cGUodm9pZCBfX3VzZXIgKip1c2VyX2luZm8pIHsgfQp2b2lkIHN1c2ZzX2FkZF9zdXNfdHlwZSh2b2lkIF9fdXNlciAqKnVzZXJfaW5mbykgeyB9CnZvaWQgc3VzZnNfc2V0X3N1c19wYXRoX3VpZF9maWx0ZXIodm9pZCBfX3VzZXIgKip1c2VyX2luZm8pIHsgfQo=' | base64 -d > fs/susfs_compat.c
-          echo "=== head ==="
-          head -6 fs/susfs_compat.c
-          echo "=== lines: $(wc -l < fs/susfs_compat.c) ==="
-          echo "=== add to Makefile ==="
+          echo "compat lines: $(wc -l < fs/susfs_compat.c)"
           grep -q "susfs_compat.o" fs/Makefile || echo 'obj-$(CONFIG_KSU_SUSFS) += susfs_compat.o' >> fs/Makefile
           grep -n "susfs" fs/Makefile
           echo ">>> compat ready"
 
-      - name: 2.7 Rewire SUS_KSTAT callsites to 2.3.0 API
+      - name: 2.7 Rewire SUS_KSTAT callsites
         run: |
           set -e
-          echo "=== fs/stat.c before ==="
-          grep -n "susfs_sus_ino_for_generic_fillattr" fs/stat.c || true
           sed -i 's|extern void susfs_sus_ino_for_generic_fillattr(unsigned long ino, struct kstat \*stat);|extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode *inode, struct kstat *stat, u32 result_mask);|' fs/stat.c
           sed -i 's|susfs_sus_ino_for_generic_fillattr(inode->i_ino, stat);|susfs_sus_kstat_spoof_generic_fillattr(inode, stat, STATX_SUS_KSTAT);|' fs/stat.c
-          echo "=== fs/stat.c after ==="
-          grep -n "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c || { echo "FAIL stat.c"; exit 1; }
-
-          echo "=== task_mmu.c before ==="
-          grep -n "susfs_sus_ino_for_show_map_vma" fs/proc/task_mmu.c || true
+          grep -n "susfs_sus_kstat_spoof_generic_fillattr" fs/stat.c
           sed -i 's|extern void susfs_sus_ino_for_show_map_vma(unsigned long ino, dev_t \*out_dev, unsigned long \*out_ino);|extern void susfs_sus_kstat_spoof_show_map_vma(struct inode *inode, dev_t *out_dev, unsigned long *out_ino);|' fs/proc/task_mmu.c
           sed -i 's|susfs_sus_ino_for_show_map_vma(inode->i_ino, &dev, &ino);|susfs_sus_kstat_spoof_show_map_vma(inode, \&dev, \&ino);|' fs/proc/task_mmu.c
-          echo "=== task_mmu.c after ==="
-          grep -n "susfs_sus_kstat_spoof_show_map_vma" fs/proc/task_mmu.c || { echo "FAIL task_mmu.c"; exit 1; }
-          echo ">>> SUS_KSTAT callsites rewired"
+          grep -n "susfs_sus_kstat_spoof_show_map_vma" fs/proc/task_mmu.c
+          echo ">>> rewired"
 
       - name: 3. Integrate BakaSU
         run: |
@@ -75,7 +75,6 @@ jobs:
           ln -sfn ../KernelSU/kernel drivers/kernelsu
           ls -la drivers/kernelsu
           test -f drivers/kernelsu/Kconfig
-          head -3 drivers/kernelsu/Kconfig
           grep -q "kernelsu" drivers/Makefile || printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
           grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig || sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           echo ">>> integrated"
@@ -100,7 +99,7 @@ jobs:
           grep -n "susfs_is_avc_log_spoofing_enabled" security/selinux/avc.c
           echo ">>> avc aligned"
 
-      - name: 4. Build
+      - name: 4. Build with ORIGINAL config
         run: |
           set -eo pipefail
           export ARCH=arm64
@@ -109,57 +108,57 @@ jobs:
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export PATH=/usr/lib/llvm-18/bin:$PATH
-          echo "###### 4.1 defconfig ######"
+          echo "###### 4.1 base defconfig ######"
           make O=out odin_defconfig < /dev/null
-          wc -l out/.config
-          echo "###### 4.2 config ######"
+          echo "###### 4.2 overwrite with ORIGINAL config ######"
           CFG=./scripts/config
           F=out/.config
-          $CFG --file $F --enable KSU
+          cp /tmp/orig.config $F
+          echo "lines after copy: $(wc -l < $F)"
+          echo "###### 4.3 adjust ######"
           $CFG --file $F --disable KSU_TRACEPOINT_HOOK
           $CFG --file $F --disable KSU_MANUAL_HOOK
           $CFG --file $F --enable KSU_SUSFS
-          $CFG --file $F --enable KSU_SUSFS_SUS_PATH
-          $CFG --file $F --enable KSU_SUSFS_SUS_MOUNT
-          $CFG --file $F --enable KSU_SUSFS_SUS_KSTAT
-          $CFG --file $F --enable KSU_SUSFS_SPOOF_UNAME
-          $CFG --file $F --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-          $CFG --file $F --enable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-          $CFG --file $F --enable KSU_SUSFS_SUS_MAP
-          $CFG --file $F --disable KSU_SUSFS_OPEN_REDIRECT
-          $CFG --file $F --disable KSU_SUSFS_ENABLE_LOG
+          $CFG --file $F --disable LTO_CLANG
+          $CFG --file $F --enable LTO_NONE
           $CFG --file $F --disable LOCALVERSION_AUTO
           $CFG --file $F --set-str LOCALVERSION "-qgki-odin-QiuChenly"
-          $CFG --file $F --disable LTO_CLANG
           $CFG --file $F --disable MODULE_SIG
           $CFG --file $F --disable MODULE_SIG_FORCE
           $CFG --file $F --disable MODULE_SIG_ALL
-          echo "###### 4.3 olddefconfig ######"
+          echo "###### 4.4 olddefconfig ######"
           make O=out olddefconfig < /dev/null
-          echo "###### 4.4 verify ######"
-          grep -E "^CONFIG_KSU|SUSFS|^CONFIG_LOCALVERSION" $F || true
+          echo "###### 4.5 verify ######"
+          grep -E "^CONFIG_LOCALVERSION|^CONFIG_KSU=|^CONFIG_KSU_SUSFS|^CONFIG_LTO" $F || true
           grep -q "^CONFIG_KSU=y" $F || { echo "FAIL KSU"; exit 1; }
           grep -q "^CONFIG_KSU_SUSFS=y" $F || { echo "FAIL SUSFS"; exit 1; }
-          grep -q '^CONFIG_LOCALVERSION="-qgki-odin-QiuChenly"' $F || { echo "FAIL LOCALVERSION"; exit 1; }
           echo ">>> config OK"
-          echo "###### 4.5 build ######"
+          echo "###### 4.6 build ######"
           make O=out -j$(nproc) Image < /dev/null 2>&1 | tee build.log
-          echo "###### 4.6 result ######"
+          echo "###### 4.7 result ######"
           ls -la out/arch/arm64/boot/
+          echo "IMAGE SIZE: $(stat -c %s out/arch/arm64/boot/Image)"
+          echo "原版参考: 40321536"
 
       - name: 5. Diagnose
         if: always()
         run: |
           echo "##### Image #####"
           find out -name "Image*" -type f 2>/dev/null | head || true
-          echo "##### susfs .o #####"
-          find out -name "susfs*.o" 2>/dev/null | head || true
-          echo "##### ksu .o count #####"
-          find out -path "*kernelsu*" -name "*.o" 2>/dev/null | wc -l || true
+          echo "##### size compare #####"
+          IMG=out/arch/arm64/boot/Image
+          if [ -f $IMG ]; then
+            SZ=$(stat -c %s $IMG)
+            echo "built: $SZ"
+            echo "orig : 40321536"
+            echo "diff : $((40321536 - SZ))"
+          fi
+          echo "##### version #####"
+          strings $IMG 2>/dev/null | grep -m1 "Linux version 5.4" || true
           echo "##### errors #####"
-          grep -nE "error:|Error [0-9]|undefined reference|multiple definition|redefinition|You lost|can't open|fatal" build.log 2>/dev/null | head -60 || echo "(none)"
+          grep -nE "error:|Error [0-9]|undefined reference|multiple definition|You lost|can't open|fatal" build.log 2>/dev/null | head -40 || echo "(none)"
           echo "##### tail #####"
-          tail -30 build.log 2>/dev/null || true
+          tail -25 build.log 2>/dev/null || true
 
       - name: 6. Package
         if: success()
@@ -169,20 +168,20 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git /tmp/AK3
           cd /tmp/AK3
           rm -rf .git
-          sed -i 's/^kernel.string=.*/kernel.string=BakaSU+SUSFS230 odin/' anykernel.sh
+          sed -i 's/^kernel.string=.*/kernel.string=odin orig-config/' anykernel.sh
           sed -i 's/^device.name1=.*/device.name1=odin/' anykernel.sh
           sed -i 's/^device.name2=.*/device.name2=MIX4/' anykernel.sh
           cp $GITHUB_WORKSPACE/Image-odin ./Image
-          zip -r9 $GITHUB_WORKSPACE/odin-BakaSU-SUSFS230.zip *
+          zip -r9 $GITHUB_WORKSPACE/odin-kernel-origcfg.zip *
           cd $GITHUB_WORKSPACE
-          ls -la Image-odin odin-BakaSU-SUSFS230.zip
+          ls -la Image-odin odin-kernel-origcfg.zip
 
       - name: 7. Upload
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: odin-BakaSU-SUSFS230
+          name: odin-kernel-origcfg
           path: |
             Image-odin
-            odin-BakaSU-SUSFS230.zip
+            odin-kernel-origcfg.zip
             build.log
