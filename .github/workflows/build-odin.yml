@@ -66,11 +66,18 @@ jobs:
           grep -n "susfs_sus_kstat_spoof_show_map_vma" fs/proc/task_mmu.c
           echo ">>> rewired"
 
-      - name: 3. Integrate BakaSU
+      - name: 3. Integrate BakaSU (v35235 = author's build)
         run: |
           set -e
           rm -rf KernelSU
-          git clone --depth=1 https://github.com/Baka-SU/BakaSU.git KernelSU
+          git clone https://github.com/Baka-SU/BakaSU.git KernelSU
+          cd KernelSU
+          git checkout 7c383cfeef3a2ac450f2f1273dae74bd50356d31
+          echo "=== KSU version code check ==="
+          CNT=$(git rev-list --count HEAD)
+          echo "commit count = $CNT  ->  version = $((30000 + CNT + 700))"
+          echo "expect 35235"
+          cd ..
           rm -f drivers/kernelsu
           ln -sfn ../KernelSU/kernel drivers/kernelsu
           ls -la drivers/kernelsu
@@ -122,9 +129,12 @@ jobs:
           F=out/.config
           $CFG --file $F --disable KSU_TRACEPOINT_HOOK
           $CFG --file $F --disable KSU_MANUAL_HOOK
-          $CFG --file $F --enable KSU_SUSFS
+          $CFG --file $F --enable  KSU_SUSFS
+          # 保持源码原样版本号（5.4.302），不再伪装成 5.10
           $CFG --file $F --disable LOCALVERSION_AUTO
           $CFG --file $F --set-str LOCALVERSION "-qgki-odin-QiuChenly"
+          # 关键：关闭符号 CRC 校验，让 vendor_boot 里的 .ko 能加载
+          $CFG --file $F --disable MODVERSIONS
           $CFG --file $F --disable MODULE_SIG
           $CFG --file $F --disable MODULE_SIG_FORCE
           $CFG --file $F --disable MODULE_SIG_ALL
@@ -143,6 +153,8 @@ jobs:
           fi
           grep -q "^CONFIG_KSU=y" $F || { echo "FAIL KSU"; exit 1; }
           grep -q "^CONFIG_KSU_SUSFS=y" $F || { echo "FAIL SUSFS"; exit 1; }
+          if grep -q "^CONFIG_MODVERSIONS=y" $F; then echo "FAIL: MODVERSIONS still y"; exit 1; fi
+          echo ">>> MODVERSIONS disabled OK"
 
           echo "###### 4.6 build ######"
           make O=out $MAKEOPTS -j$(nproc) Image < /dev/null 2>&1 | tee build.log
