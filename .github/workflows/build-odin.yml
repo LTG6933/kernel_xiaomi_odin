@@ -99,6 +99,14 @@ jobs:
           done
           echo "  fixed $CNT headers"
 
+          echo "=== 5.54 remove GCC-only warning options (clang 不认) ==="
+          for mf in Makefile scripts/Makefile.* ; do
+            if [ -f "$mf" ]; then
+              sed -i 's/ -Werror=maybe-uninitialized//g; s/-Werror=maybe-uninitialized//g' "$mf"
+            fi
+          done
+          echo "  检查残留:"
+          grep -rn "Werror=maybe-uninitialized" Makefile scripts/ 2>/dev/null | head -3 || echo "  (cleared)"
           echo "=== 5.55 fix fake_state -> selinux_state ==="
           grep -rn "fake_state" security/selinux/ 2>/dev/null | head -5 || echo "  no fake_state"
           sed -i 's|\bfake_state\b|selinux_state|g' security/selinux/selinuxfs.c security/selinux/hooks.c 2>/dev/null || true
@@ -178,7 +186,7 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           export CLANG_TRIPLE=aarch64-linux-gnu-
-          export KCFLAGS="-Wno-error=maybe-uninitialized -Wno-error=implicit-fallthrough -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=misleading-indentation -Wno-error=address-of-packed-member"
+          export KCFLAGS="-Wno-error=implicit-fallthrough -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=misleading-indentation -Wno-error=address-of-packed-member"
           MAKEOPTS="ARCH=arm64 CC=clang LD=ld.lld CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           make O=out $MAKEOPTS -j$(nproc) Image 2>&1 | tee build.log | tail -80 || true
           echo "=== result ==="
