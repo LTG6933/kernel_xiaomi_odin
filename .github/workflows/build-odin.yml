@@ -85,6 +85,20 @@ jobs:
             echo "  lz4p asm.h patched"
           fi
           grep -rn "__has_feature" drivers/block/zram/lz4p/ 2>/dev/null | head -5 || true
+          echo "=== fix broken techpack headers（内容是路径的 .h）==="
+          CNT=0
+          for f in $(find techpack -name '*.h' -size -400c 2>/dev/null); do
+            c=$(cat "$f" 2>/dev/null | tr -d '\r\n')
+            case "$c" in
+              *'/'*.h)
+                t="$(dirname "$f")/$c"
+                if [ -f "$t" ]; then cp -f "$t" "$f"; CNT=$((CNT+1)); fi
+                ;;
+            esac
+          done
+          echo "  fixed $CNT headers"
+          echo "=== 检查 pinctrl-utils.h ==="
+          head -2 techpack/audio/soc/pinctrl-utils.h 2>/dev/null || true
           echo "=== susfs stubs ==="
           echo "CmludCBzdXNmc19hZGRfc3VzX3R5cGUoY29uc3QgY2hhciAqc2VjY3R4LCB1MzIgdHlwZV92YWx1ZSkgeyByZXR1cm4gMDsgfQppbnQgc3VzZnNfYWRkX3N1c19hdmRfYWxsb3dlZF9ieV90eXBlKHUzMiBzLCB1MzIgdCwgdTE2IHR5LCB1MzIgbykgeyByZXR1cm4gMDsgfQp2b2lkIHN1c2ZzX3NldF9wcmlvcml0eV91aWRfZmlsdGVyKHZvaWQgX191c2VyICoqdWkpIHsgfQp2b2lkIHN1c2ZzX3BhcnNlX3ByaW9yaXR5X2FwcF9zdHJpbmdzKHZvaWQpIHsgfQo=" | base64 -d >> fs/susfs.c
           echo "CiNpZm5kZWYgQ01EX1NVU0ZTX1NFVF9TVVNfUEFUSF9VSURfRklMVEVSCiNkZWZpbmUgQ01EX1NVU0ZTX1NFVF9TVVNfUEFUSF9VSURfRklMVEVSIDB4NTU1NTQKI2VuZGlmCmludCBzdXNmc19hZGRfc3VzX3R5cGUoY29uc3QgY2hhciAqc2VjY3R4LCB1MzIgdHlwZV92YWx1ZSk7CmludCBzdXNmc19hZGRfc3VzX2F2ZF9hbGxvd2VkX2J5X3R5cGUodTMyIHMsIHUzMiB0LCB1MTYgdHksIHUzMiBvKTsKdm9pZCBzdXNmc19zZXRfcHJpb3JpdHlfdWlkX2ZpbHRlcih2b2lkIF9fdXNlciAqKnVpKTsKdm9pZCBzdXNmc19wYXJzZV9wcmlvcml0eV9hcHBfc3RyaW5ncyh2b2lkKTsK" | base64 -d >> include/linux/susfs.h
