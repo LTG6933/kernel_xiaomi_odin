@@ -73,6 +73,14 @@ jobs:
             fi
           done
           sed -i 's/-Werror/-Wno-error/g' $DRV/Kbuild 2>/dev/null || true
+          echo "=== fix lz4p asm.h __has_feature ==="
+          LZ=drivers/block/zram/lz4p/asm.h
+          if [ -f "$LZ" ] && ! grep -q "__has_feature(x) 0" "$LZ"; then
+            printf '#ifndef __has_feature\n#define __has_feature(x) 0\n#endif\n' | cat - "$LZ" > "$LZ.tmp" && mv "$LZ.tmp" "$LZ"
+            head -4 "$LZ"
+            echo "  lz4p asm.h patched"
+          fi
+          grep -rn "__has_feature" drivers/block/zram/lz4p/ 2>/dev/null | head -5 || true
           echo "=== susfs stubs ==="
           echo "CmludCBzdXNmc19hZGRfc3VzX3R5cGUoY29uc3QgY2hhciAqc2VjY3R4LCB1MzIgdHlwZV92YWx1ZSkgeyByZXR1cm4gMDsgfQppbnQgc3VzZnNfYWRkX3N1c19hdmRfYWxsb3dlZF9ieV90eXBlKHUzMiBzLCB1MzIgdCwgdTE2IHR5LCB1MzIgbykgeyByZXR1cm4gMDsgfQp2b2lkIHN1c2ZzX3NldF9wcmlvcml0eV91aWRfZmlsdGVyKHZvaWQgX191c2VyICoqdWkpIHsgfQp2b2lkIHN1c2ZzX3BhcnNlX3ByaW9yaXR5X2FwcF9zdHJpbmdzKHZvaWQpIHsgfQo=" | base64 -d >> fs/susfs.c
           echo "CiNpZm5kZWYgQ01EX1NVU0ZTX1NFVF9TVVNfUEFUSF9VSURfRklMVEVSCiNkZWZpbmUgQ01EX1NVU0ZTX1NFVF9TVVNfUEFUSF9VSURfRklMVEVSIDB4NTU1NTQKI2VuZGlmCmludCBzdXNmc19hZGRfc3VzX3R5cGUoY29uc3QgY2hhciAqc2VjY3R4LCB1MzIgdHlwZV92YWx1ZSk7CmludCBzdXNmc19hZGRfc3VzX2F2ZF9hbGxvd2VkX2J5X3R5cGUodTMyIHMsIHUzMiB0LCB1MTYgdHksIHUzMiBvKTsKdm9pZCBzdXNmc19zZXRfcHJpb3JpdHlfdWlkX2ZpbHRlcih2b2lkIF9fdXNlciAqKnVpKTsKdm9pZCBzdXNmc19wYXJzZV9wcmlvcml0eV9hcHBfc3RyaW5ncyh2b2lkKTsK" | base64 -d >> include/linux/susfs.h
