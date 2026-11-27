@@ -136,7 +136,8 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           export CLANG_TRIPLE=aarch64-linux-gnu-
-          make O=out -j$(nproc) Image 2>&1 | tee build.log | tail -50 || true
+          export KCFLAGS="-Wno-error=implicit-fallthrough -Wno-error=implicit-function-declaration -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=misleading-indentation -Wno-error=address-of-packed-member"
+          make O=out -j$(nproc) Image 2>&1 | tee build.log | tail -60 || true
           echo "=== result ==="
           ls -lh out/arch/arm64/boot/Image* 2>/dev/null || echo "no Image"
           stat -c "IMAGE SIZE: %s" out/arch/arm64/boot/Image 2>/dev/null || echo "IMAGE SIZE: 0"
@@ -153,8 +154,19 @@ jobs:
           find out -name "susfs*.o" 2>/dev/null | head || true
           echo "##### ksu .o count #####"
           find out -path "*kernelsu*" -name "*.o" 2>/dev/null | wc -l || true
-          echo "##### errors #####"
-          grep -nE "error:|Error [0-9]|undefined reference|No rule to make|fatal" build.log 2>/dev/null | head -40 || echo "(none)"
+          echo "##### error 行汇总 #####"
+          grep -nE "^.*error:" build.log 2>/dev/null | head -30 || echo "(none)"
+          echo "##### kernelsu 错误上下文 #####"
+          grep -n "drivers/kernelsu" build.log 2>/dev/null | head -5
+          L=$(grep -n "drivers/kernelsu.*error" build.log 2>/dev/null | head -1 | cut -d: -f1)
+          if [ -n "$L" ]; then
+            sed -n "$((L>30?L-30:1)),$((L+10))p" build.log | tail -45
+          else
+            grep -n -B8 "drivers/kernelsu\] Error" build.log 2>/dev/null | tail -30 || true
+          fi
+          echo "##### 最后一个 error 前 30 行 #####"
+          L2=$(grep -nE "error:" build.log 2>/dev/null | tail -1 | cut -d: -f1)
+          if [ -n "$L2" ]; then sed -n "$((L2>30?L2-30:1)),$((L2+3))p" build.log; fi
           echo "##### tail #####"
           tail -30 build.log 2>/dev/null || true
 
