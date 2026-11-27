@@ -110,9 +110,11 @@ jobs:
           $CFG --file $F --disable MODULE_SIG
           $CFG --file $F --disable MODULE_SIG_FORCE
           $CFG --file $F --disable MODULE_SIG_ALL
+          # 关键：关掉 SPF（原版未开，且和小米改的 mm.h 冲突）
+          $CFG --file $F --disable SPECULATIVE_PAGE_FAULT
           make O=out olddefconfig < /dev/null
           echo "=== verify ==="
-          grep -E "^CONFIG_KSU|^CONFIG_LOCALVERSION|^CONFIG_MODVERSIONS|^CONFIG_CC_IS_CLANG" $F || true
+          grep -E "^CONFIG_KSU|^CONFIG_LOCALVERSION|^CONFIG_MODVERSIONS|^CONFIG_CC_IS_CLANG|SPECULATIVE_PAGE_FAULT" $F || true
           grep -q "^CONFIG_KSU=y" $F || { echo "FAIL KSU"; exit 1; }
           grep -q "^CONFIG_KSU_SUSFS=y" $F || { echo "FAIL SUSFS"; exit 1; }
           echo ">>> config OK"
